@@ -1,0 +1,22 @@
+# 构建文件
+__pycache__
+*.pyc
+build
+dist
+*spec
+upx*
+install.bat
+
+# 资源包不开源
+/resources/PetArt/*.png
+
+# 暂时还没做好的基本icon文件
+logo.ico
+logo.png
+
+# 调试文件
+/log
+/data
+/test.py
+*.lnk
+~*
