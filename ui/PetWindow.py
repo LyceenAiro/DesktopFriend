@@ -10,12 +10,14 @@ app = QApplication(sys.argv)
 from ui.PetArt import *
 
 from util.log import _log
+from util.version import version
 
 # 所有Event类型请通过注册表注册使用
 
 class DesktopPet(QWidget):
     def __init__(self):
         super().__init__()
+        _log.INFO("初始化桌宠...")
 
         self.setWindowTitle('')
         # 清除窗口框体和任务栏图标
@@ -23,22 +25,37 @@ class DesktopPet(QWidget):
         # 默认设置在顶层
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(200, 200)
+        self.setFixedSize(128, 128)
 
         self.mouse_press_position = None
         self.is_follow_mouse = False
 
         # 行动点数
         self.move_count = 0
+        self.move_timer = 200
 
         # 图像初始化
         self.PetArt = QLabel(self)
-        self.PetArt.setPixmap(PetArtList[0])
+        self.PetArt.setPixmap(PetArtList[DEFAULT])
         self.PetArt.move(0, 0)
+
+        # 最大x坐标
+        self.screen_max_x = self.ScreenMaxX()
 
         # 定时器
         self.Picktimer = QTimer(self)
         self.Picktimer.setSingleShot(True)
+
+        _log.INFO(f"初始化完成")
+        _log.INFO(f"当前版本: v{version}")
+        _log.INFO(f"作者: LyceenAiro")
+        _log.INFO(f"开源链接: github.com/LyceenAiro/DesktopFriend")
+        _log.INFO(f"资源包名：艾罗 !!!请勿盗用!!!")
+        _log.INFO(f"如果发现有任何问题均可在GitHub上提交issue或直接联系我")
+        _log.INFO(f"该软件完全开源免费，禁止任何形式的二次销售！")
+
+    # 屏幕最大X轴坐标
+    def ScreenMaxX(self): return app.primaryScreen().size().width()
     
     # 定时器注册
     def RegisterTimeout(self, callback): self.Picktimer.timeout.connect(callback)

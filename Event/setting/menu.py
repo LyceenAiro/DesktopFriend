@@ -4,6 +4,9 @@ from PySide6.QtGui import QIcon, QAction
 
 from Event.setting.system import *
 
+from Event.setting.system import _create_icon_from_base64
+from resources.image_resources import LOGO_PNG
+
 from ui.PetWindow import DesktopPet, app
 
 def menu_init(self: DesktopPet):
@@ -24,7 +27,7 @@ def menu_init(self: DesktopPet):
 
 def tray_init(self: DesktopPet):
     self.tray_icon = QSystemTrayIcon(self)
-    self.tray_icon.setIcon(QIcon("logo.png"))
+    self.tray_icon.setIcon(_create_icon_from_base64(LOGO_PNG))
     self.tray_icon.setContextMenu(self.menu)
     self.tray_icon.activated.connect(lambda reason: TrayIconActivated(reason, self))
     self.tray_icon.show()

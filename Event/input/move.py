@@ -1,21 +1,130 @@
 from util.log import _log
 from Event.Art.Pet import *
+from PySide6.QtCore import QTimer
 
-from ui.PetWindow import DesktopPet
+from ui.PetWindow import DesktopPet, PetWindow
+from ui.PetArt import DEFAULT, DEFAULT_R, WALK1, WALK2, WALK3, WALK4, WALK1_R, WALK2_R, WALK3_R, WALK4_R, JUMP
 
 def move_clear(self: DesktopPet):
     self.move_count = 0
-    self.Movetimer.stop()
-    self.PetArt.setPixmap(PetArtList[0])
+    if hasattr(self, 'Movetimer') and self.Movetimer:
+        self.Movetimer.stop()
+    _walk.stop()
+    self.PetArt.setPixmap(PetArtList[DEFAULT])
 
 def move_left(self: DesktopPet):
     if self.move_count <= 0:
         _log.INFO("移动自然停止")
         move_clear(self)
-    elif self.x() - 1 < 0:
-        self.move(0, self.y())
-        _log.INFO("已经移动到最左侧了")
+    else:
+        _walk.start_left()
+
+def move_right(self: DesktopPet):
+    if self.move_count <= 0:
+        _log.INFO("移动自然停止")
         move_clear(self)
     else:
-        self.move_count -= 1
-        self.move(self.x() - 1, self.y())
+        _walk.start_right()
+
+def move_jump(self: DesktopPet):
+    _log.INFO("跳跃")
+    if hasattr(self, 'jump_timer') and self.jump_timer:
+        self.jump_timer.stop()
+
+    self.PetArt.setPixmap(PetArtList[JUMP])
+    self.jump_timer = QTimer(self)
+    self.jump_timer.setSingleShot(True)
+    self.jump_timer.timeout.connect(lambda: self.PetArt.setPixmap(PetArtList[DEFAULT]))
+    self.jump_timer.start(150)
+
+class move_event:
+    def __init__(self, self_pet: DesktopPet):
+        self.Pet = self_pet
+        self.code = 0
+        self.status = 0
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.animate_step)
+
+    def move_init(self):
+        self.code = 0
+        self.status = 0
+
+    def start_left(self):
+        if self.status != 1:
+            self.move_init()
+            self.Pet.PetArt.setPixmap(PetArtList[WALK1])
+        self.status = 1
+        self.timer.start(self.Pet.move_timer)
+
+    def start_right(self):
+        if self.status != 2:
+            self.move_init()
+            self.Pet.PetArt.setPixmap(PetArtList[WALK1_R])
+        self.status = 2
+        self.timer.start(self.Pet.move_timer)
+
+    def animate_step(self):
+        self.code += 1
+
+        if self.status == 1:
+            if self.Pet.move_count <= 0:
+                self.stop()
+                return
+
+            if self.Pet.x() - 2 < 0:
+                _log.INFO("已经移动到最左侧了")
+                self.Pet.move(0, self.Pet.y())
+                self.stop()
+                return
+            
+            _log.INFO(f"正在向左移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}")
+
+            if self.code == 1:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK1])
+            elif self.code == 2:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK2])
+            elif self.code == 3:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK3])
+            elif self.code == 4:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK4])
+                self.Pet.move_count -= 2
+                self.Pet.move(self.Pet.x() - 2, self.Pet.y())
+                self.Pet.PetArt.setPixmap(PetArtList[DEFAULT])
+                self.code = 0
+            else:
+                self.code = 0
+
+        elif self.status == 2:
+            if self.Pet.move_count <= 0:
+                self.stop()
+                return
+
+            if self.Pet.x() + 2 >= self.Pet.screen_max_x - self.Pet.width():
+                _log.INFO("已经移动到最右侧了")
+                self.Pet.move(self.Pet.screen_max_x - self.Pet.width(), self.Pet.y())
+                self.stop()
+                return
+            
+            _log.INFO(f"正在向右移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}")
+
+            if self.code == 1:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK1_R])
+            elif self.code == 2:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK2_R])
+            elif self.code == 3:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK3_R])
+            elif self.code == 4:
+                self.Pet.PetArt.setPixmap(PetArtList[WALK4_R])
+                self.Pet.move_count -= 2
+                self.Pet.move(self.Pet.x() + 2, self.Pet.y())
+                self.Pet.PetArt.setPixmap(PetArtList[DEFAULT_R])
+                self.code = 0
+            else:
+                self.code = 0
+
+    def stop(self):
+        _log.INFO("移动停止")
+        self.timer.stop()
+        self.move_init()
+
+_walk = move_event(PetWindow)

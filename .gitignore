@@ -8,13 +8,16 @@ upx*
 install.bat
 
 # 资源包不开源
-/resources/PetArt/*.png
+*.aseprite
+/resources/PetArt*
+/resources/image_resources.py
 
 # 暂时还没做好的基本icon文件
 logo.ico
 logo.png
 
 # 调试文件
+pack_app.py
 /log
 /data
 /test.py
