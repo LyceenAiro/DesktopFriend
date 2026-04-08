@@ -10,7 +10,7 @@ install.bat
 # 资源包不开源
 *.aseprite
 /resources/PetArt*
-/resources/image_resources.py
+/resources/*.json
 
 # 暂时还没做好的基本icon文件
 logo.ico

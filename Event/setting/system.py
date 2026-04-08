@@ -21,11 +21,18 @@ def QuitApp(self: DesktopPet, app):
         _log.INFO("退出桌宠")
         app.exit()
         return
+    # 中断任何正在进行的移动动作
+    if hasattr(self, 'jump_timer') and self.jump_timer:
+        self.jump_timer.stop()
+    self.move_count = 0
+    from Event.input.move import _walk
+    _walk.stop()
     _play_hide_animation(self, lambda: _exit_app(self, app))
 
 
 def _exit_app(self: DesktopPet, app):
     _log.INFO("退出桌宠")
+    self.AutoMove = False  # 退出时彻底关闭AutoMove
     self.hide()
     app.exit()
 
@@ -33,6 +40,10 @@ def _exit_app(self: DesktopPet, app):
 def HideApp(self: DesktopPet):
     # 隐藏程序
     _log.INFO("隐藏桌宠")
+    self.auto_walk_on_show = self.AutoMove  # 记住隐藏前的状态
+    self.AutoMove = False
+    self.move_count = 0
+    self.origin_x = 0
     _play_hide_animation(self)
 
 
@@ -45,6 +56,32 @@ def _create_movie_from_base64(data: str):
     movie = QMovie(buffer)
     movie._buffer = buffer
     return movie
+
+def TrayIconActivated(reason, self: DesktopPet):
+    if reason == QSystemTrayIcon.DoubleClick:
+        # 双击触发
+        if self.isVisible():
+            _log.INFO("触发桌宠已经显示")
+            move_jump(self)
+            QTimer.singleShot(250, lambda: move_jump(self))
+            from Event.Ai.walk import auto_walk
+            auto_walk.reset_idle()
+            return
+        ShowApp(self)
+
+def ShowApp(self: DesktopPet):
+    if self.isVisible():
+        return
+    self.PetArt.setPixmap(PetArtList[NONE_ART])
+    self.show()
+    self.activateWindow()
+    _log.INFO("显示桌宠触发")
+
+    from Event.Ai.walk import auto_walk
+    auto_walk.stop_timer()
+    auto_walk.reset_idle()
+
+    _play_show_animation(self, lambda: _on_show_finished(self))
 
 
 def _create_icon_from_base64(base64_data):
@@ -75,28 +112,14 @@ def _on_hide_frame_changed(self: DesktopPet, frame_number: int, on_finished=None
         else:
             self.hide()
 
-def TrayIconActivated(reason, self: DesktopPet):
-    if reason == QSystemTrayIcon.DoubleClick:
-        # 双击触发
-        if self.isVisible():
-            _log.INFO("触发桌宠已经显示")
-            move_jump(self)
-            QTimer.singleShot(250, lambda: move_jump(self))
-            return
-        ShowApp(self)
+
+def _on_show_finished(self: DesktopPet):
+    self.AutoMove = self.auto_walk_on_show
+    from Event.Ai.walk import auto_walk
+    auto_walk.start_timer()
 
 
-def ShowApp(self: DesktopPet):
-    if self.isVisible():
-        return
-    self.PetArt.setPixmap(PetArtList[NONE_ART])
-    self.show()
-    self.activateWindow()
-    _log.INFO("显示桌宠触发")
-    _play_show_animation(self)
-
-
-def _play_show_animation(self: DesktopPet):
+def _play_show_animation(self: DesktopPet, on_finished=None):
     self.PetArt.setPixmap(PetArtList[NONE_ART])
     movie = _create_movie_from_base64(HIDE_GIF)
     movie.setCacheMode(QMovie.CacheAll)
@@ -106,6 +129,8 @@ def _play_show_animation(self: DesktopPet):
         frame_count = movie.frameCount()
         if frame_count <= 0:
             self.PetArt.setPixmap(PetArtList[DEFAULT])
+            if on_finished:
+                on_finished()
             return
 
         timer = QTimer(self)
@@ -116,6 +141,8 @@ def _play_show_animation(self: DesktopPet):
             if current < 0:
                 timer.stop()
                 self.PetArt.setPixmap(PetArtList[DEFAULT])
+                if on_finished:
+                    on_finished()
                 return
             movie.jumpToFrame(current)
             self.PetArt.setPixmap(movie.currentPixmap())

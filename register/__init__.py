@@ -6,3 +6,5 @@ def registerInit():
     TimeoutRegisterInit()
     MouseEventRegisterInit()
     MenuRegisterInit()
+    # 初始化自动行走
+    from Event.Ai.walk import auto_walk

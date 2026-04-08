@@ -11,6 +11,10 @@ def move_clear(self: DesktopPet):
         self.Movetimer.stop()
     _walk.stop()
     self.PetArt.setPixmap(PetArtList[DEFAULT])
+    # 移动完成后重新启动自动行走定时器
+    from Event.Ai.walk import auto_walk
+    auto_walk.is_paused_due_to_action = False
+    auto_walk.start_timer()
 
 def move_left(self: DesktopPet):
     if self.move_count <= 0:
@@ -29,12 +33,19 @@ def move_right(self: DesktopPet):
 def move_jump(self: DesktopPet):
     _log.INFO("跳跃")
     if hasattr(self, 'jump_timer') and self.jump_timer:
+        self.move_count = 0
         self.jump_timer.stop()
 
     self.PetArt.setPixmap(PetArtList[JUMP])
     self.jump_timer = QTimer(self)
     self.jump_timer.setSingleShot(True)
-    self.jump_timer.timeout.connect(lambda: self.PetArt.setPixmap(PetArtList[DEFAULT]))
+    def on_jump_finished():
+        self.PetArt.setPixmap(PetArtList[DEFAULT])
+        # 跳跃完成后重新启动自动行走定时器
+        from Event.Ai.walk import auto_walk
+        auto_walk.is_paused_due_to_action = False
+        auto_walk.start_timer()
+    self.jump_timer.timeout.connect(on_jump_finished)
     self.jump_timer.start(150)
 
 class move_event:
@@ -68,16 +79,16 @@ class move_event:
 
         if self.status == 1:
             if self.Pet.move_count <= 0:
-                self.stop()
+                move_clear(self.Pet)
                 return
 
             if self.Pet.x() - 2 < 0:
                 _log.INFO("已经移动到最左侧了")
                 self.Pet.move(0, self.Pet.y())
-                self.stop()
+                move_clear(self.Pet)
                 return
             
-            _log.INFO(f"正在向左移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}")
+            _log.INFO(f"正在向左移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}，距离原点：{self.Pet.origin_x}")
 
             if self.code == 1:
                 self.Pet.PetArt.setPixmap(PetArtList[WALK1])
@@ -88,6 +99,7 @@ class move_event:
             elif self.code == 4:
                 self.Pet.PetArt.setPixmap(PetArtList[WALK4])
                 self.Pet.move_count -= 2
+                self.Pet.origin_x -= 2
                 self.Pet.move(self.Pet.x() - 2, self.Pet.y())
                 self.Pet.PetArt.setPixmap(PetArtList[DEFAULT])
                 self.code = 0
@@ -96,16 +108,16 @@ class move_event:
 
         elif self.status == 2:
             if self.Pet.move_count <= 0:
-                self.stop()
+                move_clear(self.Pet)
                 return
 
             if self.Pet.x() + 2 >= self.Pet.screen_max_x - self.Pet.width():
                 _log.INFO("已经移动到最右侧了")
                 self.Pet.move(self.Pet.screen_max_x - self.Pet.width(), self.Pet.y())
-                self.stop()
+                move_clear(self.Pet)
                 return
             
-            _log.INFO(f"正在向右移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}")
+            _log.INFO(f"正在向右移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}，距离原点：{self.Pet.origin_x}")
 
             if self.code == 1:
                 self.Pet.PetArt.setPixmap(PetArtList[WALK1_R])
@@ -116,6 +128,7 @@ class move_event:
             elif self.code == 4:
                 self.Pet.PetArt.setPixmap(PetArtList[WALK4_R])
                 self.Pet.move_count -= 2
+                self.Pet.origin_x += 2
                 self.Pet.move(self.Pet.x() + 2, self.Pet.y())
                 self.Pet.PetArt.setPixmap(PetArtList[DEFAULT_R])
                 self.code = 0

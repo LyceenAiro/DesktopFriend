@@ -30,9 +30,17 @@ class DesktopPet(QWidget):
         self.mouse_press_position = None
         self.is_follow_mouse = False
 
+        # AI逻辑
+        self.AutoMove = True
+        self.auto_walk_on_show = True  # 隐藏/显示时的独立开关
+
         # 行动点数
         self.move_count = 0
         self.move_timer = 200
+
+        # 原点位置（每次pickup结束后重置）
+        self.origin_x = 0
+        self.max_move_range = 20  # 最大移动范围
 
         # 图像初始化
         self.PetArt = QLabel(self)

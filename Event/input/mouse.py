@@ -2,15 +2,18 @@ from util.log import _log
 from PySide6.QtGui import Qt, QCursor
 from Event.Art.Pet import *
 from Event.input.move import *
+from Event.Ai.walk import auto_walk
 
 from ui.PetWindow import DesktopPet
 from ui.PetArt import DEFAULT, PICKUP
 
 def PickUpPet(self: DesktopPet):
     # 宠物被提起
+    _log.INFO("抓起")
     self.is_follow_mouse = True
     SetPetArt(self, PICKUP)
     self.setCursor(QCursor(Qt.ClosedHandCursor))
+    auto_walk.reset_idle()
 
 def PetmouseMoveEvent(self: DesktopPet, event):
     # 移动过程时
@@ -40,9 +43,14 @@ def PetmouseReleaseEvent(self: DesktopPet, event):
         self.Picktimer.stop()
         # self.setCursor(QCursor(Qt.ArrowCursor))
     if self.is_follow_mouse:
+        _log.INFO("放下")
         SetPetArt(self, DEFAULT)
+        
         self.setCursor(Qt.OpenHandCursor)
         self.is_follow_mouse = False
+        auto_walk.reset_idle()
+        # 设置原点位置
+        self.origin_x = 0
     event.accept()
 
 def PetenterEvent(self: DesktopPet, event):
