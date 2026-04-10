@@ -8,9 +8,20 @@ from Event.setting.system import _create_icon_from_base64
 from resources.image_resources import LOGO_PNG
 
 from ui.PetWindow import DesktopPet, app
-from ui.SettingsWindow import SettingsWindow
-from ui.AboutWindow import AboutWindow
-from ui.SmartConfigWindow import SmartConfigWindow
+from ui.UnifiedSettingsWindow import UnifiedSettingsWindow
+
+
+def _open_settings_window(self: DesktopPet):
+    existing = getattr(self, "settings_window", None)
+    if existing is not None and existing.isVisible():
+        existing.raise_()
+        existing.activateWindow()
+        return
+
+    self.settings_window = UnifiedSettingsWindow(None)
+    self.settings_window.show()
+    self.settings_window.raise_()
+    self.settings_window.activateWindow()
 
 def menu_init(self: DesktopPet):
     self.menu = QMenu(self)
@@ -20,16 +31,8 @@ def menu_init(self: DesktopPet):
     self.menu.addAction(hide)
 
     settings = QAction("设置", self)
-    settings.triggered.connect(lambda: SettingsWindow(self).exec())
+    settings.triggered.connect(lambda: _open_settings_window(self))
     self.menu.addAction(settings)
-
-    smart_config = QAction("智能配置", self)
-    smart_config.triggered.connect(lambda: SmartConfigWindow(self).exec())
-    self.menu.addAction(smart_config)
-
-    about = QAction("关于", self)
-    about.triggered.connect(lambda: AboutWindow(self).exec())
-    self.menu.addAction(about)
 
     quit = QAction("退出", self)
     quit.triggered.connect(lambda: QuitApp(self, app))

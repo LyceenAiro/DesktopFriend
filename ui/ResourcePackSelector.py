@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog,
@@ -22,11 +22,13 @@ class ResourcePackSelector(QDialog):
         self.resource_packs = list(resource_packs)
         self.selected_pack = None
         self._known_pack_files = []
+        self._dragging = False
+        self._drag_start_pos = None
 
         self.setWindowTitle("选择资源包")
         self.setModal(True)
         self.setFixedSize(800, 470)
-        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+        self.setWindowFlags((self.windowFlags() & ~Qt.Tool) | Qt.Window | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         self._init_ui()
@@ -123,6 +125,22 @@ class ResourcePackSelector(QDialog):
 
         shell_layout.addWidget(left_panel, 10)
         shell_layout.addWidget(right_panel, 14)
+
+        self._drag_widgets = [
+            self,
+            self.window_shell,
+            left_panel,
+            right_panel,
+            brand_label,
+            subtitle_label,
+            desc_label,
+            hint_label,
+            title_label,
+            self.info_label,
+        ]
+        for widget in self._drag_widgets:
+            widget.setMouseTracking(True)
+            widget.installEventFilter(self)
 
         self.setStyleSheet(
             """
@@ -314,3 +332,23 @@ class ResourcePackSelector(QDialog):
         if not self.selected_pack:
             return
         self.accept()
+
+    def eventFilter(self, watched, event):
+        if watched in getattr(self, "_drag_widgets", []):
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._dragging = True
+                self._drag_start_pos = event.globalPosition().toPoint()
+                return True
+
+            if event.type() == QEvent.MouseMove and self._dragging:
+                current_global = event.globalPosition().toPoint()
+                delta = current_global - self._drag_start_pos
+                self.move(self.pos() + delta)
+                self._drag_start_pos = current_global
+                return True
+
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self._dragging = False
+                self._drag_start_pos = None
+
+        return super().eventFilter(watched, event)

@@ -1,5 +1,5 @@
 import sys
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication, QDialog
 from ui.ErrorDialog import ErrorDialog
 from util.log import _log
@@ -19,14 +19,20 @@ def exception_hook(exc_type, exc_value, exc_traceback):
     import traceback
     _log.ERROR("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
     # 显示错误对话框
-    error_dialog = ErrorDialog(exc_type, exc_value, exc_traceback)
+    app = QApplication.instance()
+    error_dialog = ErrorDialog(exc_type, exc_value, exc_traceback, parent=None)
+    error_dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+    error_dialog.show()
+    error_dialog.raise_()
+    error_dialog.activateWindow()
     error_dialog.exec()
 
 if __name__ == "__main__":
     # 设置全局异常处理
     sys.excepthook = exception_hook
 
-    QApplication.instance() or QApplication(sys.argv)
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
 
     resource_pack_items = [
         {
