@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButt
 from PySide6.QtCore import Qt
 import traceback
 import sys
+from ui.styles.dialog_theme import apply_adobe_dialog_theme
 
 class ErrorDialog(QDialog):
     def __init__(self, exc_type, exc_value, exc_traceback, parent=None):
@@ -14,7 +15,7 @@ class ErrorDialog(QDialog):
 
         # 错误标题
         title_label = QLabel("发生未处理的错误：")
-        title_label.setStyleSheet("font-weight: bold; color: red;")
+        title_label.setObjectName("title")
         layout.addWidget(title_label)
 
         # 错误信息
@@ -35,6 +36,7 @@ class ErrorDialog(QDialog):
         # 按钮布局
         button_layout = QHBoxLayout()
         ok_button = QPushButton("确定")
+        ok_button.setObjectName("primaryButton")
         ok_button.clicked.connect(self.accept)
         button_layout.addWidget(ok_button)
 
@@ -45,6 +47,7 @@ class ErrorDialog(QDialog):
         layout.addLayout(button_layout)
 
         self.setLayout(layout)
+        apply_adobe_dialog_theme(self)
 
     def quit_app(self):
         sys.exit(1)

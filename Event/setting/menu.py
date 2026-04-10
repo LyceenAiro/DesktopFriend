@@ -14,19 +14,10 @@ from ui.SmartConfigWindow import SmartConfigWindow
 
 def menu_init(self: DesktopPet):
     self.menu = QMenu(self)
-    
-    stayTop = QAction("置顶", self, checkable=True)
-    stayTop.setChecked(True)
-    stayTop.triggered.connect(lambda: AppStayTop(self, stayTop))
-    self.menu.addAction(stayTop)
 
     hide = QAction("隐藏", self)
     hide.triggered.connect(lambda: HideApp(self))
     self.menu.addAction(hide)
-
-    quit = QAction("退出", self)
-    quit.triggered.connect(lambda: QuitApp(self, app))
-    self.menu.addAction(quit)
 
     settings = QAction("设置", self)
     settings.triggered.connect(lambda: SettingsWindow(self).exec())
@@ -39,6 +30,10 @@ def menu_init(self: DesktopPet):
     about = QAction("关于", self)
     about.triggered.connect(lambda: AboutWindow(self).exec())
     self.menu.addAction(about)
+
+    quit = QAction("退出", self)
+    quit.triggered.connect(lambda: QuitApp(self, app))
+    self.menu.addAction(quit)
 
 def tray_init(self: DesktopPet):
     self.tray_icon = QSystemTrayIcon(self)

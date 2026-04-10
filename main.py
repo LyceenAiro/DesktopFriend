@@ -1,10 +1,9 @@
 import sys
-from ui.PetWindow import PetWindow, app
-from register import registerInit
 from PySide6.QtCore import QTimer
-from Event.setting.system import ShowApp
+from PySide6.QtWidgets import QApplication, QDialog
 from ui.ErrorDialog import ErrorDialog
 from util.log import _log
+from resources.image_resources import get_available_resource_packs, get_resource_pack_display_name, set_resource_pack
 
 from warnings import filterwarnings
 filterwarnings("ignore", category=DeprecationWarning)
@@ -26,6 +25,30 @@ def exception_hook(exc_type, exc_value, exc_traceback):
 if __name__ == "__main__":
     # 设置全局异常处理
     sys.excepthook = exception_hook
+
+    QApplication.instance() or QApplication(sys.argv)
+
+    resource_pack_items = [
+        {
+            "file": pack_name,
+            "display": get_resource_pack_display_name(pack_name),
+        }
+        for pack_name in get_available_resource_packs()
+    ]
+
+    from ui.ResourcePackSelector import ResourcePackSelector
+    selector = ResourcePackSelector(resource_pack_items)
+    if selector.exec() != QDialog.DialogCode.Accepted:
+        _log.INFO("用户取消资源包选择，程序退出")
+        sys.exit(0)
+
+    set_resource_pack(selector.selected_pack)
+    _log.INFO(f"已选择资源包: {selector.selected_pack}")
+
+    from ui.PetWindow import PetWindow, app
+    from register import registerInit
+    from Event.setting.system import ShowApp
+
     registerInit()
     QTimer.singleShot(0, lambda: ShowApp(PetWindow))
     sys.exit(app.exec())

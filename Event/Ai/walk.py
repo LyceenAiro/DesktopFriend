@@ -1,4 +1,5 @@
 import random
+import time
 from PySide6.QtCore import QTimer
 
 from ui.PetWindow import PetWindow
@@ -15,6 +16,7 @@ class AutoWalk:
         # 开关控制
         self.is_paused_due_to_action = False  # 因为正在执行动作而暂停
         self.idle_time = 0
+        self._last_check_ts = time.time()
         self.idle_threshold = 60
         # 动作几率
         self._walk_left_per = 2
@@ -30,16 +32,23 @@ class AutoWalk:
     def start_timer(self):
         """启动定时器"""
         self.timer.stop()  # 先停止
-        self.timer.start()  # 再启动
-        _log.INFO(f"[AI]AutoWalk timer started, active: {self.timer.isActive()}")
+        self._last_check_ts = time.time()
+        self.timer.start(self.check_time)  # 使用最新检查间隔启动
+        _log.INFO(f"[AI]AutoWalk timer started, interval: {self.check_time}ms, active: {self.timer.isActive()}")
 
     def reset_idle(self):
         """重置空闲时间"""
         self.idle_time = 0
+        self._last_check_ts = time.time()
         _log.INFO("[AI]Idle time reset")
 
     def _on_timer(self):
-        self.idle_time += self.check_time / 1000.0
+        now_ts = time.time()
+        delta = now_ts - self._last_check_ts
+        if delta < 0:
+            delta = 0
+        self.idle_time += delta
+        self._last_check_ts = now_ts
         if PetWindow.AutoMove and not self.is_paused_due_to_action and not PetWindow.is_follow_mouse and self.idle_time > self.idle_threshold:
             self._perform_random_action()
         else:

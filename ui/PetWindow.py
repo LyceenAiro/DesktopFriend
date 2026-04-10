@@ -1,13 +1,14 @@
 from PySide6.QtWidgets import QWidget, QLabel
-from PySide6.QtGui import Qt
+from PySide6.QtGui import Qt, QMovie
 from PySide6.QtCore import QTimer
 from PySide6.QtCore import Qt as QtC
 
 import sys
 from PySide6.QtWidgets import QApplication
-app = QApplication(sys.argv)
+app = QApplication.instance() or QApplication(sys.argv)
 
 from ui.PetArt import *
+from resources.image_resources import get_resource_pack_name
 
 from util.log import _log
 from util.version import version
@@ -33,6 +34,8 @@ class DesktopPet(QWidget):
         # AI逻辑
         self.AutoMove = True
         self.auto_walk_on_show = True  # 隐藏/显示时的独立开关
+        self.default_action = True  # 待机默认动作开关
+        self.default_action_interval = 600  # 待机动画切换间隔(ms)
 
         # 行动点数
         self.move_count = 0
@@ -54,16 +57,70 @@ class DesktopPet(QWidget):
         self.Picktimer = QTimer(self)
         self.Picktimer.setSingleShot(True)
 
+        # 待机动画：在无动作时于 DEFAULT / DEFAULT2 间切换
+        self.default_action_timer = QTimer(self)
+        self.default_action_timer.timeout.connect(self._on_default_action_timer)
+        self.default_action_timer.start(self.default_action_interval)
+        self._default_action_toggle = False
+
         _log.INFO(f"初始化完成")
         _log.INFO(f"当前版本: v{version}")
         _log.INFO(f"作者: LyceenAiro")
         _log.INFO(f"开源链接: github.com/LyceenAiro/DesktopFriend")
-        _log.INFO(f"资源包名：艾罗 !!!请勿盗用!!!")
+        _log.INFO(f"资源包名：{get_resource_pack_name()}")
         _log.INFO(f"如果发现有任何问题均可在GitHub上提交issue或直接联系我")
-        _log.INFO(f"该软件完全开源免费，禁止任何形式的二次销售！")
+        _log.INFO(f"该软件完全开源免费，禁止任何形式对此分支商用！")
 
     # 屏幕最大X轴坐标
     def ScreenMaxX(self): return app.primaryScreen().size().width()
+
+    def set_default_action_enabled(self, enabled: bool):
+        self.default_action = bool(enabled)
+        if not self.default_action:
+            self._default_action_toggle = False
+            self.stop_default_action_timer()
+            if self._is_idle_for_default_action():
+                self.PetArt.setPixmap(PetArtList[DEFAULT])
+        else:
+            self.start_default_action_timer()
+
+    def stop_default_action_timer(self):
+        if self.default_action_timer.isActive():
+            self.default_action_timer.stop()
+
+    def start_default_action_timer(self):
+        if self.default_action and not self.default_action_timer.isActive():
+            self.default_action_timer.start(self.default_action_interval)
+
+    def set_default_action_interval(self, interval_ms: int):
+        self.default_action_interval = int(interval_ms)
+        if self.default_action_timer.isActive():
+            self.default_action_timer.start(self.default_action_interval)
+
+    def _is_idle_for_default_action(self) -> bool:
+        if not self.isVisible() or not self.default_action:
+            return False
+        if self.is_follow_mouse:
+            return False
+        if self.move_count > 0:
+            return False
+        if hasattr(self, 'jump_timer') and self.jump_timer and self.jump_timer.isActive():
+            return False
+        if self.PetArt.movie() is not None and self.PetArt.movie().state() == QMovie.Running:
+            return False
+        try:
+            from Event.input.move import _walk
+            if _walk.timer.isActive():
+                return False
+        except Exception:
+            return False
+        return True
+
+    def _on_default_action_timer(self):
+        if not self._is_idle_for_default_action():
+            return
+        self._default_action_toggle = not self._default_action_toggle
+        self.PetArt.setPixmap(PetArtList[DEFAULT2] if self._default_action_toggle else PetArtList[DEFAULT])
     
     # 定时器注册
     def RegisterTimeout(self, callback): self.Picktimer.timeout.connect(callback)

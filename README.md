@@ -20,8 +20,8 @@
 - [x] 基础设置
 - [x] 智能设置
 - [x] 关于窗口
-- [ ] 待机帧切换
-- [ ] 进入时选择资源包
+- [x] 待机帧切换
+- [x] 进入时选择资源包
 - [ ] 热切换资源
 - [x] 双击跳跃
 - [x] 范围限制的随机行走
@@ -35,10 +35,10 @@
 # 路径 ./resources/PetArt/{自定义}
 分辨率 128 x 128
 待机动画    .png    1+1 帧  其中 default.png 为主要帧
-走路动画    .png    4 帧    每4帧移动 2 像素（无需反转资源）
+走路动画    .png    4 帧    第 2、3 帧向左移动 2 像素（无需反转资源）
 跳起动画    .png    1 帧
 拖动动画    .png    1 帧
-渐入动画    .gif    1 组    帧数任意（无需反转资源）
+渐入动画    .gif    1 组    帧数任意（无需反转资源，建议头尾增加缓冲帧）
 
 # 路径 ./
 分辨率 128 x 128
@@ -46,7 +46,7 @@
 桌面图标    .ico    1 张    仅用于打包，不会被编码
 ```  
 
-通过base64编码打包的资源，运行pack_resources.py即可
+通过base64编码打包的资源，运行资源编码器pack_resources.py即可
 ```
 resources/{name}.json
 ```
@@ -55,13 +55,13 @@ resources/{name}.json
 ```
 # 待机动画
 default.png     # 主要帧
-default2.png
+default2.png    # 待机动画使用
 
 # 走路动画
 walk.png
 walk2.png
 walk3.png
-walk4.png
+walk4.png       # 拷贝default.png即可
 
 # 双击跳起
 jump.png
@@ -69,6 +69,25 @@ jump.png
 # 拖动动画
 pickup.png
 
+# 空白代替帧
+None.png
+
 # 桌角图标
 logo.png
 ```
+
+### 开发块
+#### 代码
+- 后端框架设计：LyceenAiro
+- 后端框架代码：LyceenAiro + Copilot
+- 前端动画设计：LyceenAiro
+- 前端动画代码：LyceenAiro + Copilot 
+- 资源编码器设计：LyceenAiro + Copilot
+- 资源编码器代码：Copilot
+
+#### 美术资源(拒绝生成式AI创建美术资源)
+- 动画资源支持：犬牙冢
+- 动画资源细化、创建：LyceenAiro
+
+## LICENSE
+[BSD 3-Clause License](./LICENSE)

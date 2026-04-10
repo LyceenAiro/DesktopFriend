@@ -26,7 +26,7 @@ def convert_images_to_json(images_dict, output_path="resources/image.json"):
 
 
 if __name__ == "__main__":
-    package_name = "default"  # 修改资源包名称
+    package_name = "艾罗"  # 修改资源包名称
     images = {
         'PACK_NAME': package_name,
         'LOGO_PNG': 'logo.png',
@@ -42,4 +42,4 @@ if __name__ == "__main__":
         'HIDE_GIF': f'resources/PetArt/{package_name}/hide.gif'
     }
 
-    convert_images_to_json(images)
+    convert_images_to_json(images, output_path=f"resources/{package_name}.json")

@@ -1,3 +1,6 @@
+import ctypes
+import sys
+
 from ui.PetArt import PetArtList, DEFAULT, NONE_ART
 from util.log import _log
 from PySide6.QtWidgets import QSystemTrayIcon
@@ -61,6 +64,7 @@ def TrayIconActivated(reason, self: DesktopPet):
     if reason == QSystemTrayIcon.DoubleClick:
         # 双击触发
         if self.isVisible():
+            _bring_pet_to_front(self)
             _log.INFO("触发桌宠已经显示")
             move_jump(self)
             QTimer.singleShot(250, lambda: move_jump(self))
@@ -68,6 +72,31 @@ def TrayIconActivated(reason, self: DesktopPet):
             auto_walk.reset_idle()
             return
         ShowApp(self)
+        _bring_pet_to_front(self)
+
+
+def _bring_pet_to_front(self: DesktopPet):
+    """将窗口临时提到最前，避免取消置顶后被其他窗口遮挡。"""
+    was_stay_top = bool(self.windowFlags() & Qt.WindowStaysOnTopHint)
+    self.raise_()
+    self.activateWindow()
+    if was_stay_top or sys.platform != "win32":
+        return
+
+    # Windows 下使用原生 API 短暂提到最前，避免切换 Qt flag 造成闪烁。
+    hwnd = int(self.winId())
+    user32 = ctypes.windll.user32
+    HWND_TOPMOST = -1
+    HWND_NOTOPMOST = -2
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_SHOWWINDOW = 0x0040
+    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+
+    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+    user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+    self.raise_()
+    self.activateWindow()
 
 def ShowApp(self: DesktopPet):
     if self.isVisible():
@@ -92,6 +121,7 @@ def _create_icon_from_base64(base64_data):
 
 
 def _play_hide_animation(self: DesktopPet, on_finished=None):
+    self.stop_default_action_timer()
     self.PetArt.setPixmap(PetArtList[NONE_ART])
     self.movie = _create_movie_from_base64(HIDE_GIF)
     self.movie.setCacheMode(QMovie.CacheAll)
@@ -117,9 +147,11 @@ def _on_show_finished(self: DesktopPet):
     self.AutoMove = self.auto_walk_on_show
     from Event.Ai.walk import auto_walk
     auto_walk.start_timer()
+    self.start_default_action_timer()
 
 
 def _play_show_animation(self: DesktopPet, on_finished=None):
+    self.stop_default_action_timer()
     self.PetArt.setPixmap(PetArtList[NONE_ART])
     movie = _create_movie_from_base64(HIDE_GIF)
     movie.setCacheMode(QMovie.CacheAll)
