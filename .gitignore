@@ -19,7 +19,7 @@ logo.png
 # 调试文件
 pack_app.py
 /log
-/data
+/config
 /test.py
 *.lnk
 ~*

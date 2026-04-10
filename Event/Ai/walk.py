@@ -4,24 +4,29 @@ from PySide6.QtCore import QTimer
 
 from ui.PetWindow import PetWindow
 from util.log import _log
+from util.cfg import load_config
 from Event.input.move import move_left, move_right, move_jump
 
 class AutoWalk:
     def __init__(self):
         self.timer = QTimer()
         self.timer.timeout.connect(self._on_timer)
+        
+        # 从配置文件加载参数
+        smart_config = load_config("smart")
+        
         # 检查时间
-        self.check_time = 5000
+        self.check_time = smart_config.get("check_time", 5000)
         self.timer.start(self.check_time)
         # 开关控制
         self.is_paused_due_to_action = False  # 因为正在执行动作而暂停
         self.idle_time = 0
         self._last_check_ts = time.time()
-        self.idle_threshold = 60
+        self.idle_threshold = smart_config.get("idle_threshold", 60)
         # 动作几率
-        self._walk_left_per = 2
-        self._walk_right_per = 2
-        self._jump_per = 5
+        self._walk_left_per = smart_config.get("walk_left_per", 2)
+        self._walk_right_per = smart_config.get("walk_right_per", 2)
+        self._jump_per = smart_config.get("jump_per", 5)
         _log.INFO("Register AutoWalk success")
 
     def stop_timer(self):

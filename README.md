@@ -22,9 +22,9 @@
 - [x] 关于窗口
 - [x] 待机帧切换
 - [x] 进入时选择资源包
-- [ ] 热切换资源
 - [x] 双击跳跃
 - [x] 范围限制的随机行走
+- [x] 配置文件热保存
 
 #### 3.养成系统
 - 未来规划
@@ -77,13 +77,21 @@ logo.png
 ```
 
 ### 开发块
-#### 代码
-- 后端框架设计：LyceenAiro
-- 后端框架代码：LyceenAiro + Copilot
-- 前端动画设计：LyceenAiro
-- 前端动画代码：LyceenAiro + Copilot 
-- 资源编码器设计：LyceenAiro + Copilot
-- 资源编码器代码：Copilot
+##### 框架
+- 设计：LyceenAiro
+- 代码：LyceenAiro + Copilot
+##### 桌宠动画及脚本
+- 设计：LyceenAiro
+- 代码：LyceenAiro + Copilot
+##### 设置
+- 设计：LyceenAiro + Copilot
+- 代码：Copilot 
+##### 资源选择器
+- 设计：Copilot
+- 代码：Copilot 
+##### 资源编码器
+- 设计：LyceenAiro + Copilot
+- 代码：Copilot
 
 #### 美术资源(拒绝生成式AI创建美术资源)
 - 动画资源支持：犬牙冢

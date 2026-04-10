@@ -12,6 +12,7 @@ from resources.image_resources import get_resource_pack_name
 
 from util.log import _log
 from util.version import version
+from util.cfg import init_config_dir, load_config
 
 # 所有Event类型请通过注册表注册使用
 
@@ -20,30 +21,36 @@ class DesktopPet(QWidget):
         super().__init__()
         _log.INFO("初始化桌宠...")
 
+        # 初始化配置文件夹和加载配置
+        init_config_dir()
+        basic_config = load_config("basic")
+        smart_config = load_config("smart")
+
         self.setWindowTitle('')
         # 清除窗口框体和任务栏图标
         self.setWindowFlag(Qt.FramelessWindowHint | self.windowFlags() | QtC.Tool)
         # 默认设置在顶层
-        self.setWindowFlag(Qt.WindowStaysOnTopHint)
+        if basic_config.get("stay_top", True):
+            self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(128, 128)
 
         self.mouse_press_position = None
         self.is_follow_mouse = False
 
-        # AI逻辑
-        self.AutoMove = True
+        # AI逻辑：从配置文件加载
+        self.AutoMove = smart_config.get("auto_move", True)
         self.auto_walk_on_show = True  # 隐藏/显示时的独立开关
-        self.default_action = True  # 待机默认动作开关
-        self.default_action_interval = 600  # 待机动画切换间隔(ms)
+        self.default_action = basic_config.get("default_action", True)
+        self.default_action_interval = basic_config.get("default_action_interval", 600)
 
         # 行动点数
         self.move_count = 0
-        self.move_timer = 200
+        self.move_timer = basic_config.get("move_timer", 200)
 
         # 原点位置（每次pickup结束后重置）
         self.origin_x = 0
-        self.max_move_range = 20  # 最大移动范围
+        self.max_move_range = smart_config.get("max_move_range", 20)
 
         # 图像初始化
         self.PetArt = QLabel(self)
@@ -79,8 +86,7 @@ class DesktopPet(QWidget):
         if not self.default_action:
             self._default_action_toggle = False
             self.stop_default_action_timer()
-            if self._is_idle_for_default_action():
-                self.PetArt.setPixmap(PetArtList[DEFAULT])
+            self.PetArt.setPixmap(PetArtList[DEFAULT])
         else:
             self.start_default_action_timer()
 

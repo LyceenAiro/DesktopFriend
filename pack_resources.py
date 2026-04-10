@@ -17,7 +17,12 @@ def convert_images_to_json(images_dict, output_path="resources/image.json"):
             image_data[var_name] = base64.b64encode(image_bytes).decode('utf-8')
             print(f"已转换: {path} -> {var_name}")
         else:
-            print(f"文件不存在: {path}")
+            # 如果不是有效路径，作为纯字符串直接写入
+            if not Path(image_path).suffix and not ('/' in image_path or '\\' in image_path):
+                image_data[var_name] = image_path
+                print(f"已写入字符串字段: {var_name} = {image_path}")
+            else:
+                print(f"文件不存在: {path}")
 
     with output_file.open('w', encoding='utf-8') as f:
         json.dump(image_data, f, ensure_ascii=False, indent=2)

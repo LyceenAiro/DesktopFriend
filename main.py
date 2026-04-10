@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from ui.ErrorDialog import ErrorDialog
 from util.log import _log
 from resources.image_resources import get_available_resource_packs, get_resource_pack_display_name, set_resource_pack
+from util.cfg import init_config_dir, load_config, save_config
 
 from warnings import filterwarnings
 filterwarnings("ignore", category=DeprecationWarning)
@@ -33,23 +34,57 @@ if __name__ == "__main__":
 
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    init_config_dir()
 
-    resource_pack_items = [
-        {
-            "file": pack_name,
-            "display": get_resource_pack_display_name(pack_name),
-        }
-        for pack_name in get_available_resource_packs()
-    ]
+    basic_config = load_config("basic")
+    use_auto_pack = bool(basic_config.get("auto_load_resource_pack", False))
+    default_pack = str(basic_config.get("default_resource_pack", "image.json"))
+    selected_pack = None
 
-    from ui.ResourcePackSelector import ResourcePackSelector
-    selector = ResourcePackSelector(resource_pack_items)
-    if selector.exec() != QDialog.DialogCode.Accepted:
-        _log.INFO("用户取消资源包选择，程序退出")
-        sys.exit(0)
+    if use_auto_pack:
+        available_packs = set(get_available_resource_packs())
+        if default_pack not in available_packs:
+            basic_config["auto_load_resource_pack"] = False
+            basic_config["default_resource_pack"] = ""
+            save_config("basic", basic_config)
+            _log.WARN(f"默认资源包不存在，已清除自动加载设置: {default_pack}")
+        else:
+            try:
+                set_resource_pack(default_pack)
+                selected_pack = default_pack
+                _log.INFO(f"自动加载默认资源包成功: {selected_pack}")
+            except FileNotFoundError as exc:
+                basic_config["auto_load_resource_pack"] = False
+                basic_config["default_resource_pack"] = ""
+                save_config("basic", basic_config)
+                _log.WARN(f"默认资源包未找到，已清除自动加载设置: {default_pack}, 原因: {exc}")
+            except Exception as exc:
+                _log.WARN(f"自动加载默认资源包失败: {default_pack}, 原因: {exc}")
 
-    set_resource_pack(selector.selected_pack)
-    _log.INFO(f"已选择资源包: {selector.selected_pack}")
+    if not selected_pack:
+        resource_pack_items = [
+            {
+                "file": pack_name,
+                "display": get_resource_pack_display_name(pack_name),
+            }
+            for pack_name in get_available_resource_packs()
+        ]
+
+        from ui.ResourcePackSelector import ResourcePackSelector
+        selector = ResourcePackSelector(resource_pack_items)
+        if selector.exec() != QDialog.DialogCode.Accepted:
+            _log.INFO("用户取消资源包选择，程序退出")
+            sys.exit(0)
+
+        set_resource_pack(selector.selected_pack)
+        selected_pack = selector.selected_pack
+        _log.INFO(f"已选择资源包: {selected_pack}")
+
+        if selector.remember_as_default:
+            basic_config["auto_load_resource_pack"] = True
+            basic_config["default_resource_pack"] = selected_pack
+            save_config("basic", basic_config)
+            _log.INFO(f"已设置默认资源包: {selected_pack}")
 
     from ui.PetWindow import PetWindow, app
     from register import registerInit
