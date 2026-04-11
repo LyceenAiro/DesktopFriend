@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from ui.styles.dialog_theme import apply_adobe_dialog_theme, apply_frameless_window_theme
+from util.i18n import tr
 
 
 class ConfirmDialog(QDialog):
@@ -65,7 +66,7 @@ class ConfirmDialog(QDialog):
         button_layout.setSpacing(12)
         button_layout.addStretch()
 
-        self.cancel_button = QPushButton("取消")
+        self.cancel_button = QPushButton(tr("common.cancel"))
         self.cancel_button.setMinimumWidth(80)
         self.cancel_button.setStyleSheet("""
             QPushButton {
@@ -84,7 +85,7 @@ class ConfirmDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_button)
 
-        self.confirm_button = QPushButton("确认")
+        self.confirm_button = QPushButton(tr("common.confirm"))
         self.confirm_button.setMinimumWidth(80)
         self.confirm_button.setObjectName("primaryButton")
         self.confirm_button.setStyleSheet("""

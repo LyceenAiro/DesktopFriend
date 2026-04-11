@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 
-def convert_images_to_json(images_dict, output_path="resources/image.json"):
+def convert_images_to_json(images_dict, output_path="resources/default.json"):
     base_dir = Path(__file__).resolve().parent
     output_file = base_dir / output_path
     output_file.parent.mkdir(parents=True, exist_ok=True)

@@ -9,10 +9,11 @@ from ui.setting.tabs.smart.css import PROB_ROW_SPACING, ROW_MARGINS, ROW_SPACING
 from ui.styles.toggle_switch import ToggleSwitch
 from util.log import _log
 from util.cfg import save_config
+from util.i18n import tr
 
 
 class SmartConfigTab(QFrame):
-    tab_name = "智能配置"
+    tab_name = tr("settings.tabs.smart.name")
     can_save = True
 
     def __init__(self, parent=None):
@@ -21,21 +22,21 @@ class SmartConfigTab(QFrame):
         layout.setContentsMargins(*TAB_MARGINS)
         layout.setSpacing(TAB_SPACING)
 
-        base_card = create_section_card("基础参数", "控制智能运动触发与移动范围限制")
+        base_card = create_section_card(tr("settings.smart.card.base.title"), tr("settings.smart.card.base.desc"))
         base_layout = base_card.layout()
-        self.range_spin = self._build_spin_row(base_layout, "范围控制", 1, 8192, PetWindow.max_move_range, " px")
-        self.check_spin = self._build_spin_row(base_layout, "检查间隔", 50, 1000, auto_walk.check_time, " ms")
-        self.idle_spin = self._build_spin_row(base_layout, "空闲阈值", 1, 300, auto_walk.idle_threshold, " s")
+        self.range_spin = self._build_spin_row(base_layout, tr("settings.smart.range"), 1, 8192, PetWindow.max_move_range, " px")
+        self.check_spin = self._build_spin_row(base_layout, tr("settings.smart.check_interval"), 50, 1000, auto_walk.check_time, " ms")
+        self.idle_spin = self._build_spin_row(base_layout, tr("settings.smart.idle_threshold"), 1, 300, auto_walk.idle_threshold, " s")
 
-        prob_card = create_section_card("动作权重", "几率总和不能超过 100%")
+        prob_card = create_section_card(tr("settings.smart.card.weight.title"), tr("settings.smart.card.weight.desc"))
         prob_layout = prob_card.layout()
-        self.left_spin = self._build_weight_row(prob_layout, "左移", auto_walk._walk_left_per)
-        self.right_spin = self._build_weight_row(prob_layout, "右移", auto_walk._walk_right_per)
-        self.jump_spin = self._build_weight_row(prob_layout, "跳跃", auto_walk._jump_per)
+        self.left_spin = self._build_weight_row(prob_layout, tr("settings.smart.weight.left"), auto_walk._walk_left_per)
+        self.right_spin = self._build_weight_row(prob_layout, tr("settings.smart.weight.right"), auto_walk._walk_right_per)
+        self.jump_spin = self._build_weight_row(prob_layout, tr("settings.smart.weight.jump"), auto_walk._jump_per)
 
-        switch_card = create_section_card("开关", "关闭后仅保留手动交互")
+        switch_card = create_section_card(tr("settings.smart.card.switch.title"), tr("settings.smart.card.switch.desc"))
         switch_layout = switch_card.layout()
-        self.automove_check = self._build_switch_row(switch_layout, "启用智能运动", PetWindow.AutoMove)
+        self.automove_check = self._build_switch_row(switch_layout, tr("settings.smart.enable_auto"), PetWindow.AutoMove)
 
         layout.addWidget(base_card)
         layout.addSpacing(8)
@@ -112,7 +113,7 @@ class SmartConfigTab(QFrame):
     def validate(self):
         total_per = self.left_spin.value() + self.right_spin.value() + self.jump_spin.value()
         if total_per > 100:
-            raise ValueError(f"动作权重总和不能超过 100%，当前为 {total_per}%")
+            raise ValueError(tr("settings.smart.weight_error", total=total_per))
 
     def save_tab(self):
         self.validate()

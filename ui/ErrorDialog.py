@@ -13,13 +13,14 @@ from PySide6.QtGui import QColor
 import traceback
 import sys
 from ui.styles.dialog_theme import apply_adobe_dialog_theme, apply_frameless_window_theme
+from util.i18n import tr
 
 class ErrorDialog(QDialog):
     def __init__(self, exc_type, exc_value, exc_traceback, parent=None):
         super().__init__(parent)
         self._dragging = False
         self._drag_start_pos = None
-        self.setWindowTitle("错误")
+        self.setWindowTitle(tr("error.title"))
         self.setModal(True)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -55,7 +56,7 @@ class ErrorDialog(QDialog):
         top_bar_layout.setContentsMargins(22, 12, 16, 10)
         top_bar_layout.setSpacing(0)
 
-        self.title_label = QLabel("错误")
+        self.title_label = QLabel(tr("error.title"))
         self.title_label.setObjectName("title")
         top_bar_layout.addWidget(self.title_label, 0, Qt.AlignVCenter)
         top_bar_layout.addStretch()
@@ -97,7 +98,7 @@ class ErrorDialog(QDialog):
         content_layout.setContentsMargins(22, 18, 22, 16)
         content_layout.setSpacing(14)
 
-        subtitle_label = QLabel("发生未处理的错误")
+        subtitle_label = QLabel(tr("error.subtitle"))
         subtitle_label.setObjectName("subtitle")
         content_layout.addWidget(subtitle_label)
 
@@ -107,7 +108,7 @@ class ErrorDialog(QDialog):
         error_label.setWordWrap(True)
         content_layout.addWidget(error_label)
 
-        stack_label = QLabel("详细堆栈跟踪")
+        stack_label = QLabel(tr("error.stack"))
         stack_label.setObjectName("sectionTitle")
         content_layout.addWidget(stack_label)
 
@@ -130,13 +131,13 @@ class ErrorDialog(QDialog):
         button_layout.setSpacing(10)
         button_layout.addStretch()
 
-        ok_button = QPushButton("确定")
+        ok_button = QPushButton(tr("common.ok"))
         ok_button.setObjectName("primaryButton")
         ok_button.setMinimumWidth(90)
         ok_button.clicked.connect(self.accept)
         button_layout.addWidget(ok_button)
 
-        quit_button = QPushButton("退出程序")
+        quit_button = QPushButton(tr("error.quit_app"))
         quit_button.setMinimumWidth(100)
         quit_button.clicked.connect(self.quit_app)
         button_layout.addWidget(quit_button)

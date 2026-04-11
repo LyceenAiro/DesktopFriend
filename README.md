@@ -86,6 +86,10 @@ logo.png
 ##### 设置
 - 设计：LyceenAiro + Copilot
 - 代码：Copilot 
+##### i18
+- 设计：LyceenAiro + Copilot
+- 代码：Copilot
+- 重构：Copilot
 ##### 资源选择器
 - 设计：Copilot
 - 代码：Copilot 

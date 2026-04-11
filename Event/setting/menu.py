@@ -1,14 +1,45 @@
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
-from PySide6.QtWidgets import QMenu
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QAction
 
 from Event.setting.system import *
 
 from Event.setting.system import _create_icon_from_base64
 from resources.image_resources import LOGO_PNG
+from util.i18n import tr
 
 from ui.PetWindow import DesktopPet, app
 from ui.UnifiedSettingsWindow import UnifiedSettingsWindow
+
+
+MENU_STYLE = """
+QMenu {
+    background-color: #242424;
+    color: #ececec;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 4px;
+}
+QMenu::item {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 6px 14px;
+    margin: 1px 0px;
+}
+QMenu::item:selected {
+    background-color: #4a2220;
+    border: 1px solid #f95f53;
+    color: #ffffff;
+}
+QMenu::item:disabled {
+    color: #777777;
+}
+QMenu::separator {
+    height: 1px;
+    background: #3a3a3a;
+    margin: 4px 4px;
+}
+"""
 
 
 def _open_settings_window(self: DesktopPet):
@@ -25,18 +56,30 @@ def _open_settings_window(self: DesktopPet):
 
 def menu_init(self: DesktopPet):
     self.menu = QMenu(self)
+    self.menu.setStyleSheet(MENU_STYLE)
 
-    hide = QAction("隐藏", self)
+    hide = QAction(tr("menu.hide"), self)
     hide.triggered.connect(lambda: HideApp(self))
     self.menu.addAction(hide)
 
-    settings = QAction("设置", self)
+    settings = QAction(tr("menu.settings"), self)
     settings.triggered.connect(lambda: _open_settings_window(self))
     self.menu.addAction(settings)
 
-    quit = QAction("退出", self)
+    self.menu.addSeparator()
+
+    quit = QAction(tr("menu.quit"), self)
     quit.triggered.connect(lambda: QuitApp(self, app))
     self.menu.addAction(quit)
+
+    # 让菜单宽度略大于最宽文本，预留缩进空间
+    fm = self.menu.fontMetrics()
+    max_text_width = max(
+        fm.horizontalAdvance(hide.text()),
+        fm.horizontalAdvance(settings.text()),
+        fm.horizontalAdvance(quit.text()),
+    )
+    self.menu.setMinimumWidth(max_text_width + 56)
 
 def tray_init(self: DesktopPet):
     self.tray_icon = QSystemTrayIcon(self)

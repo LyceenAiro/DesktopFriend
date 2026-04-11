@@ -11,18 +11,18 @@ CONFIG_FILES = {
     "basic": CONFIG_DIR / "basic.cfg",
     "smart": CONFIG_DIR / "smart.cfg",
     "debug": CONFIG_DIR / "debug.cfg",
-    "about": CONFIG_DIR / "about.cfg",
 }
 
 # 默认配置值
 DEFAULT_CONFIGS = {
     "basic": {
         "move_timer": 200,
-        "default_action_interval": 600,
+        "default_action_interval": 800,
         "stay_top": True,
         "default_action": True,
         "auto_load_resource_pack": False,
         "default_resource_pack": "default.json",
+        "locale": "zh_cn",
     },
     "smart": {
         "check_time": 5000,
@@ -34,10 +34,9 @@ DEFAULT_CONFIGS = {
         "auto_move": True,
     },
     "debug": {
-        "toast_duration_ms": 3000,
-    },
-    "about": {
-        "app_name": "DesktopFriend",
+        "toast_duration_ms": 10000,
+        "developer_mode": False,
+        "locale": "zh_cn",
     },
 }
 

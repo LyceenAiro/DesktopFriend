@@ -29,6 +29,7 @@ from ui.styles.css import (
 from ui.styles.dialog_theme import apply_adobe_dialog_theme, apply_frameless_window_theme
 from util.log import _log
 from util.cfg import load_config
+from util.i18n import tr
 
 
 class UnifiedSettingsWindow(QDialog):
@@ -46,10 +47,11 @@ class UnifiedSettingsWindow(QDialog):
         # 从配置文件加载toast时长
         debug_config = load_config("debug")
         self.toast_duration_ms = debug_config.get("toast_duration_ms", 10000)
+        self.developer_mode = bool(debug_config.get("developer_mode", False))
         
         self.active_tab = None
 
-        self.setWindowTitle("设置")
+        self.setWindowTitle(tr("settings.window.title"))
         self.setModal(False)
         self.setWindowModality(Qt.NonModal)
         self.setFixedSize(800, 600)
@@ -96,7 +98,7 @@ class UnifiedSettingsWindow(QDialog):
         top_bar_layout.setContentsMargins(28, 12, 20, 12)
         top_bar_layout.setSpacing(0)
 
-        self.title_label = QLabel("设置")
+        self.title_label = QLabel(tr("settings.window.title"))
         self.title_label.setObjectName("title")
         top_bar_layout.addWidget(self.title_label, 0, Qt.AlignVCenter)
         top_bar_layout.addStretch()
@@ -153,12 +155,12 @@ class UnifiedSettingsWindow(QDialog):
         bottom_layout.setSpacing(12)
         bottom_layout.addStretch()
 
-        self.cancel_button = QPushButton("取消")
+        self.cancel_button = QPushButton(tr("common.cancel"))
         self.cancel_button.setMinimumWidth(80)
         self.cancel_button.clicked.connect(self.close)
         bottom_layout.addWidget(self.cancel_button)
 
-        self.save_button = QPushButton("保存")
+        self.save_button = QPushButton(tr("common.save"))
         self.save_button.setObjectName("primaryButton")
         self.save_button.setMinimumWidth(80)
         self.save_button.clicked.connect(self.save_current_tab)
@@ -173,15 +175,23 @@ class UnifiedSettingsWindow(QDialog):
             BasicSettingsTab.tab_name: BasicSettingsTab(),
             SmartConfigTab.tab_name: SmartConfigTab(),
             AboutTab.tab_name: AboutTab(),
-            DebugTab.tab_name: DebugTab(
+        }
+
+        tab_order = [BasicSettingsTab.tab_name, SmartConfigTab.tab_name, AboutTab.tab_name]
+        if self.developer_mode:
+            self.tab_widgets[DebugTab.tab_name] = DebugTab(
                 throw_error_callback=self._throw_test_error,
                 feedback_callback=self._set_feedback,
                 duration_changed_callback=self._update_toast_duration,
                 initial_duration_ms=self.toast_duration_ms,
-            ),
-        }
+                move_left_callback=self._trigger_move_left,
+                move_right_callback=self._trigger_move_right,
+                jump_callback=self._trigger_jump,
+                hide_callback=self._trigger_hide,
+                show_app_callback=self._trigger_show_app,
+            )
+            tab_order.append(DebugTab.tab_name)
 
-        tab_order = [BasicSettingsTab.tab_name, SmartConfigTab.tab_name, AboutTab.tab_name, DebugTab.tab_name]
         for tab_name in tab_order:
             btn = QPushButton(tab_name)
             btn.setStyleSheet(NAV_BUTTON_STYLE)
@@ -307,20 +317,23 @@ class UnifiedSettingsWindow(QDialog):
         current_widget = self.tab_widgets.get(self.active_tab)
         can_save = bool(getattr(current_widget, "can_save", False)) if current_widget else False
         self.save_button.setVisible(can_save)
-        self.cancel_button.setText("关闭" if not can_save else "取消")
+        self.cancel_button.setText(tr("common.close") if not can_save else tr("common.cancel"))
 
     def _save_with_feedback(self, save_func):
         try:
-            save_func()
+            save_result = save_func()
         except ValueError as exc:
             self._set_feedback(str(exc), "error")
             return
         except Exception as exc:
             _log.ERROR(f"保存设置失败: {exc}")
-            self._set_feedback(f"保存失败：{exc}", "error")
+            self._set_feedback(tr("settings.window.feedback.save_failed", error=exc), "error")
             return
 
-        self._set_feedback("已保存", "success")
+        if isinstance(save_result, str) and save_result.strip():
+            self._set_feedback(save_result, "success")
+        else:
+            self._set_feedback(tr("settings.window.feedback.saved"), "success")
 
     def save_current_tab(self):
         current_widget = self.tab_widgets.get(self.active_tab)
@@ -329,7 +342,7 @@ class UnifiedSettingsWindow(QDialog):
             if callable(save_func):
                 self._save_with_feedback(save_func)
                 return
-        self._set_feedback("当前标签页没有可保存的内容", "info")
+        self._set_feedback(tr("settings.window.feedback.no_save_content"), "info")
 
     def switch_tab(self, tab_name: str):
         for name, btn in self.tab_buttons.items():
@@ -351,6 +364,54 @@ class UnifiedSettingsWindow(QDialog):
         except Exception:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             sys.excepthook(exc_type, exc_value, exc_traceback)
+
+    def _trigger_move_left(self, move_count: int):
+        from Event.Ai.walk import auto_walk
+        from Event.input.move import move_left
+        from ui.PetWindow import PetWindow
+
+        count = max(1, int(move_count))
+        auto_walk.is_paused_due_to_action = True
+        auto_walk.stop_timer()
+        PetWindow.move_count = count
+        move_left(PetWindow)
+        self._set_feedback(tr("settings.window.debug.trigger_left", count=count), "success")
+
+    def _trigger_move_right(self, move_count: int):
+        from Event.Ai.walk import auto_walk
+        from Event.input.move import move_right
+        from ui.PetWindow import PetWindow
+
+        count = max(1, int(move_count))
+        auto_walk.is_paused_due_to_action = True
+        auto_walk.stop_timer()
+        PetWindow.move_count = count
+        move_right(PetWindow)
+        self._set_feedback(tr("settings.window.debug.trigger_right", count=count), "success")
+
+    def _trigger_jump(self):
+        from Event.Ai.walk import auto_walk
+        from Event.input.move import move_jump
+        from ui.PetWindow import PetWindow
+
+        auto_walk.is_paused_due_to_action = True
+        auto_walk.stop_timer()
+        move_jump(PetWindow)
+        self._set_feedback(tr("settings.window.debug.trigger_jump"), "success")
+
+    def _trigger_hide(self):
+        from Event.setting.system import HideApp
+        from ui.PetWindow import PetWindow
+
+        HideApp(PetWindow)
+        self._set_feedback(tr("settings.window.debug.trigger_hide"), "success")
+
+    def _trigger_show_app(self):
+        from Event.setting.system import ShowApp
+        from ui.PetWindow import PetWindow
+
+        ShowApp(PetWindow)
+        self._set_feedback(tr("settings.window.debug.trigger_show"), "success")
 
     def _show_scrollbar(self):
         self._scrollbar_anim.stop()

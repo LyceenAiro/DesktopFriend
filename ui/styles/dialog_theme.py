@@ -84,6 +84,36 @@ QSpinBox::down-arrow {
     width: 10px;
     height: 10px;
 }
+QComboBox {
+    min-height: 30px;
+    color: #f0f0f0;
+    background-color: #1f1f1f;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+    padding: 3px 8px;
+    padding-right: 24px;
+    selection-background-color: #4a2220;
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left: 1px solid #3c3c3c;
+    background-color: #2f2f2f;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+QComboBox::down-arrow {
+    width: 10px;
+    height: 10px;
+}
+QComboBox QAbstractItemView {
+    background-color: #1f1f1f;
+    border: 1px solid #3c3c3c;
+    color: #f0f0f0;
+    selection-background-color: #4a2220;
+    selection-color: #ffffff;
+}
 QTextEdit {
     background-color: #1f1f1f;
     border: 1px solid #3c3c3c;

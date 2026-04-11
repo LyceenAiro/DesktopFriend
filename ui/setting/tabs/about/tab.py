@@ -4,10 +4,11 @@ from ui.setting.common import create_section_card
 from ui.setting.constants import LABEL_WIDTH
 from ui.setting.tabs.about.css import ROW_MARGINS, ROW_SPACING, TAB_MARGINS, TAB_SPACING
 from util.version import APP_NAME, author, github_link, version
+from util.i18n import tr
 
 
 class AboutTab(QFrame):
-    tab_name = "关于"
+    tab_name = tr("settings.tabs.about.name")
     can_save = False
 
     def __init__(self, parent=None):
@@ -16,13 +17,13 @@ class AboutTab(QFrame):
         layout.setContentsMargins(*TAB_MARGINS)
         layout.setSpacing(TAB_SPACING)
 
-        app_card = create_section_card("应用信息", "版本与作者信息")
+        app_card = create_section_card(tr("settings.about.card.app.title"), tr("settings.about.card.app.desc"))
         app_info_layout = app_card.layout()
-        self._add_info_row(app_info_layout, "应用名称", APP_NAME)
-        self._add_info_row(app_info_layout, "当前版本", version)
-        self._add_info_row(app_info_layout, "开发者", author)
+        self._add_info_row(app_info_layout, tr("settings.about.app_name"), APP_NAME)
+        self._add_info_row(app_info_layout, tr("settings.about.version"), version)
+        self._add_info_row(app_info_layout, tr("settings.about.author"), author)
 
-        project_card = create_section_card("项目链接", "点击可在浏览器中打开仓库")
+        project_card = create_section_card(tr("settings.about.card.project.title"), tr("settings.about.card.project.desc"))
         project_layout = project_card.layout()
 
         link_label = QLabel(f"<a href='{github_link}'>{github_link}</a>")
