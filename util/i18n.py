@@ -13,6 +13,33 @@ FALLBACK_LOCALE = "zh_cn"
 
 _cache: Dict[str, Dict[str, str]] = {}
 _active_locale: str | None = None
+_extra_lang_dirs: List[Path] = []
+
+
+def _invalidate_i18n_cache() -> None:
+    _cache.clear()
+
+
+def attach_lang_dir(lang_dir: str | Path) -> bool:
+    path = Path(lang_dir)
+    if path in _extra_lang_dirs:
+        return False
+    _extra_lang_dirs.append(path)
+    _invalidate_i18n_cache()
+    return True
+
+
+def detach_lang_dir(lang_dir: str | Path) -> bool:
+    path = Path(lang_dir)
+    if path not in _extra_lang_dirs:
+        return False
+    _extra_lang_dirs.remove(path)
+    _invalidate_i18n_cache()
+    return True
+
+
+def get_extra_lang_dirs() -> List[Path]:
+    return list(_extra_lang_dirs)
 
 
 def _load_locale_bundle(locale: str) -> Dict[str, str]:
@@ -20,17 +47,22 @@ def _load_locale_bundle(locale: str) -> Dict[str, str]:
     if normalized in _cache:
         return _cache[normalized]
 
-    file_path = LANG_DIR / f"{normalized}.json"
-    if not file_path.exists():
-        _cache[normalized] = {}
-        return _cache[normalized]
+    merged: Dict[str, str] = {}
+    search_dirs = [LANG_DIR, *_extra_lang_dirs]
+    for lang_dir in search_dirs:
+        file_path = lang_dir / f"{normalized}.json"
+        if not file_path.exists():
+            continue
 
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        _cache[normalized] = data if isinstance(data, dict) else {}
-    except Exception:
-        _cache[normalized] = {}
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                merged.update({str(k): str(v) if not isinstance(v, str) else v for k, v in data.items()})
+        except Exception:
+            continue
+
+    _cache[normalized] = merged
     return _cache[normalized]
 
 
@@ -59,11 +91,14 @@ def get_locale() -> str:
 
 def get_available_locales() -> List[Tuple[str, str]]:
     locales: List[Tuple[str, str]] = []
-    if not LANG_DIR.exists():
-        return [(FALLBACK_LOCALE, FALLBACK_LOCALE)]
+    locale_codes: set[str] = set()
+    for lang_dir in [LANG_DIR, *_extra_lang_dirs]:
+        if not lang_dir.exists():
+            continue
+        for file_path in sorted(lang_dir.glob("*.json")):
+            locale_codes.add(file_path.stem.lower())
 
-    for file_path in sorted(LANG_DIR.glob("*.json")):
-        locale_code = file_path.stem.lower()
+    for locale_code in sorted(locale_codes):
         bundle = _load_locale_bundle(locale_code)
         display_name = str(bundle.get("lang_name", locale_code))
         locales.append((locale_code, display_name))

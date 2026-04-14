@@ -1,6 +1,6 @@
 import sys
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
     QDialog,
@@ -14,8 +14,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ui.setting.tabs import AboutTab, BasicSettingsTab, DebugTab, SmartConfigTab
+from ui.setting.tabs import AboutTab, BasicSettingsTab, DebugTab, LifeManagementTab, SmartConfigTab
 from ui.setting.toast import AnimatedStatusToast
+from ui.life_window.common import create_pin_icon
 from ui.styles.css import (
     BOTTOM_BAR_STYLE,
     DIVIDER_STYLE,
@@ -38,11 +39,14 @@ class UnifiedSettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._resizing = False
+        self._resize_edge = None
         self._dragging = False
         self._resize_start_pos = None
+        self._resize_start_size = None
         self._drag_start_pos = None
         self._resize_grip_size = 10
         self._feedback_widgets = []
+        self._always_on_top = False
         
         # 从配置文件加载toast时长
         debug_config = load_config("debug")
@@ -54,7 +58,8 @@ class UnifiedSettingsWindow(QDialog):
         self.setWindowTitle(tr("settings.window.title"))
         self.setModal(False)
         self.setWindowModality(Qt.NonModal)
-        self.setFixedSize(800, 600)
+        self.setMinimumSize(820, 600)
+        self.resize(820, 600)
         self.setWindowFlags((self.windowFlags() & ~Qt.Tool) | Qt.Window | Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, False)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -65,6 +70,7 @@ class UnifiedSettingsWindow(QDialog):
         apply_adobe_dialog_theme(self)
         apply_frameless_window_theme(self)
         self._apply_close_button_style()
+        self._update_pin_button_icon()
         self._init_scrollbar_fade()
         self._init_mouse_feedback()
 
@@ -102,6 +108,15 @@ class UnifiedSettingsWindow(QDialog):
         self.title_label.setObjectName("title")
         top_bar_layout.addWidget(self.title_label, 0, Qt.AlignVCenter)
         top_bar_layout.addStretch()
+
+        self.pin_button = QPushButton()
+        self.pin_button.setObjectName("pinButton")
+        self.pin_button.setCheckable(True)
+        self.pin_button.setFixedSize(40, 32)
+        self.pin_button.setIconSize(QSize(18, 18))
+        self.pin_button.setToolTip(tr("window.pin.tooltip"))
+        self.pin_button.clicked.connect(self._toggle_always_on_top)
+        top_bar_layout.addWidget(self.pin_button, 0, Qt.AlignVCenter)
 
         self.min_button = QPushButton("−")
         self.min_button.setObjectName("minButton")
@@ -174,10 +189,16 @@ class UnifiedSettingsWindow(QDialog):
         self.tab_widgets = {
             BasicSettingsTab.tab_name: BasicSettingsTab(),
             SmartConfigTab.tab_name: SmartConfigTab(),
+            LifeManagementTab.tab_name: LifeManagementTab(
+                is_enabled_getter=self._is_life_enabled,
+                set_enabled_callback=self._set_life_enabled,
+                reset_callback=self._reset_life,
+                feedback_callback=self._set_feedback,
+            ),
             AboutTab.tab_name: AboutTab(),
         }
 
-        tab_order = [BasicSettingsTab.tab_name, SmartConfigTab.tab_name, AboutTab.tab_name]
+        tab_order = [BasicSettingsTab.tab_name, SmartConfigTab.tab_name, LifeManagementTab.tab_name, AboutTab.tab_name]
         if self.developer_mode:
             self.tab_widgets[DebugTab.tab_name] = DebugTab(
                 throw_error_callback=self._throw_test_error,
@@ -189,6 +210,7 @@ class UnifiedSettingsWindow(QDialog):
                 jump_callback=self._trigger_jump,
                 hide_callback=self._trigger_hide,
                 show_app_callback=self._trigger_show_app,
+                open_life_debug_callback=self._open_life_debug_window,
             )
             tab_order.append(DebugTab.tab_name)
 
@@ -229,7 +251,42 @@ class UnifiedSettingsWindow(QDialog):
             widget.installEventFilter(self)
 
     def _is_in_resize_zone(self, local_pos):
-        return local_pos.y() >= self.height() - self._resize_grip_size
+        return self._get_resize_edge(local_pos) is not None
+
+    def _get_resize_edge(self, local_pos):
+        near_right = local_pos.x() >= self.width() - self._resize_grip_size
+        near_bottom = local_pos.y() >= self.height() - self._resize_grip_size
+        if near_right and near_bottom:
+            return "corner"
+        if near_right:
+            return "right"
+        if near_bottom:
+            return "bottom"
+        return None
+
+    def _cursor_by_edge(self, edge):
+        if edge == "corner":
+            return Qt.SizeFDiagCursor
+        if edge == "right":
+            return Qt.SizeHorCursor
+        if edge == "bottom":
+            return Qt.SizeVerCursor
+        return Qt.ArrowCursor
+
+    def _apply_resize_from_edge(self, global_pos):
+        if self._resize_edge is None or self._resize_start_pos is None or self._resize_start_size is None:
+            return
+
+        delta = global_pos - self._resize_start_pos
+        new_width = self._resize_start_size.width()
+        new_height = self._resize_start_size.height()
+
+        if self._resize_edge in ("right", "corner"):
+            new_width = max(820, min(1600, self._resize_start_size.width() + delta.x()))
+        if self._resize_edge in ("bottom", "corner"):
+            new_height = max(400, min(1200, self._resize_start_size.height() + delta.y()))
+
+        self.resize(int(new_width), int(new_height))
 
     def _map_event_pos_to_self(self, watched, event):
         if not hasattr(event, "position"):
@@ -280,6 +337,41 @@ class UnifiedSettingsWindow(QDialog):
             }
             """
         )
+
+        self.pin_button.setStyleSheet(
+            """
+            QPushButton#pinButton {
+                background-color: transparent;
+                border: 1px solid transparent;
+                color: #dcdcdc;
+                font-size: 15px;
+                font-weight: 700;
+                border-radius: 8px;
+                padding: 0px;
+            }
+            QPushButton#pinButton:hover {
+                background-color: #3a3a3a;
+                color: #ffffff;
+            }
+            QPushButton#pinButton:checked {
+                background-color: #1f5a9e;
+                border: 1px solid #3f79c3;
+                color: #ffffff;
+            }
+            """
+        )
+
+    def _toggle_always_on_top(self, checked: bool) -> None:
+        self._always_on_top = bool(checked)
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, self._always_on_top)
+        self._update_pin_button_icon()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _update_pin_button_icon(self) -> None:
+        color = "#ffffff" if self._always_on_top else "#dcdcdc"
+        self.pin_button.setIcon(create_pin_icon(color, active=self._always_on_top))
 
     def _init_scrollbar_fade(self):
         scrollbar = self.scroll_area.verticalScrollBar()
@@ -413,6 +505,91 @@ class UnifiedSettingsWindow(QDialog):
         ShowApp(PetWindow)
         self._set_feedback(tr("settings.window.debug.trigger_show"), "success")
 
+    def _open_life_debug_window(self):
+        from ui.life import LifeDebugWindow
+
+        existing = getattr(self, "life_debug_window", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        self.life_debug_window = LifeDebugWindow(self)
+        self.life_debug_window.show()
+        self.life_debug_window.raise_()
+        self.life_debug_window.activateWindow()
+        self._set_feedback(tr("settings.window.debug.open_life_debug", "已打开养成调试窗口"), "success")
+
+    def _is_life_enabled(self) -> bool:
+        from module.life.runtime import is_life_loop_active
+        return is_life_loop_active()
+
+    def _set_life_enabled(self, enabled: bool) -> None:
+        from module.life.runtime import set_life_enabled
+        set_life_enabled(enabled)
+
+    def _reset_life(self) -> None:
+        from module.life.runtime import get_life_system
+        get_life_system().reset_profile()
+
+    def _open_life_window(self):
+        from ui.life import LifeWindow
+
+        existing = getattr(self, "life_window", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        self.life_window = LifeWindow(self)
+        self.life_window.show()
+        self.life_window.raise_()
+        self.life_window.activateWindow()
+        self._set_feedback(tr("settings.window.debug.open_life", "已打开养成面板"), "success")
+
+    def _list_life_buffs(self) -> list[str]:
+        from module.life.runtime import get_life_system
+
+        life = get_life_system()
+        return life.list_buff_ids()
+
+    def _list_life_effects(self) -> list[str]:
+        from module.life.runtime import get_life_system
+
+        life = get_life_system()
+        return life.list_active_effect_ids()
+
+    def _apply_life_effect(self, buff_id: str, duration_ticks: int):
+        from module.life.runtime import get_life_system
+
+        buff_id = str(buff_id).strip()
+        if not buff_id:
+            self._set_feedback(tr("settings.window.debug.life_effect.empty"), "error")
+            return
+
+        life = get_life_system()
+        if life.apply_buff(buff_id, duration_override=max(1, int(duration_ticks))):
+            self._set_feedback(
+                tr("settings.window.debug.life_effect.applied", effect=f"{buff_id} ({int(duration_ticks)} tick)"),
+                "success",
+            )
+            return
+        self._set_feedback(tr("settings.window.debug.life_effect.apply_failed", effect=buff_id), "error")
+
+    def _clear_life_effect(self, effect_id: str):
+        from module.life.runtime import get_life_system
+
+        effect_id = str(effect_id).strip()
+        if not effect_id:
+            self._set_feedback(tr("settings.window.debug.life_effect.empty"), "error")
+            return
+
+        life = get_life_system()
+        if life.clear_effect(effect_id):
+            self._set_feedback(tr("settings.window.debug.life_effect.cleared", effect=effect_id), "success")
+            return
+        self._set_feedback(tr("settings.window.debug.life_effect.clear_failed", effect=effect_id), "info")
+
     def _show_scrollbar(self):
         self._scrollbar_anim.stop()
         self._scrollbar_anim.setStartValue(self._scrollbar_opacity.opacity())
@@ -429,15 +606,12 @@ class UnifiedSettingsWindow(QDialog):
     def eventFilter(self, watched, event):
         if watched in self._feedback_widgets or watched in self.tab_widgets.values():
             local_pos = self._map_event_pos_to_self(watched, event)
-            in_resize_zone = local_pos is not None and self._is_in_resize_zone(local_pos)
+            resize_edge = self._get_resize_edge(local_pos) if local_pos is not None else None
 
             if event.type() == QEvent.MouseMove:
-                if self._resizing and self._resize_start_pos is not None:
-                    delta = event.globalPosition().y() - self._resize_start_pos
-                    new_height = max(400, min(self.height() + delta, 1200))
-                    self.setFixedSize(self.width(), int(new_height))
-                    self._resize_start_pos = event.globalPosition().y()
-                    self.setCursor(QCursor(Qt.SizeVerCursor))
+                if self._resizing:
+                    self._apply_resize_from_edge(event.globalPosition().toPoint())
+                    self.setCursor(QCursor(self._cursor_by_edge(self._resize_edge)))
                     return True
 
                 if self._dragging:
@@ -447,13 +621,15 @@ class UnifiedSettingsWindow(QDialog):
                     self._drag_start_pos = current_global
                     return True
 
-                self.setCursor(QCursor(Qt.SizeVerCursor if in_resize_zone else Qt.ArrowCursor))
+                self.setCursor(QCursor(self._cursor_by_edge(resize_edge)))
 
             if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-                if in_resize_zone:
+                if resize_edge is not None:
                     self._resizing = True
-                    self._resize_start_pos = event.globalPosition().y()
-                    self.setCursor(QCursor(Qt.SizeVerCursor))
+                    self._resize_edge = resize_edge
+                    self._resize_start_pos = event.globalPosition().toPoint()
+                    self._resize_start_size = self.size()
+                    self.setCursor(QCursor(self._cursor_by_edge(resize_edge)))
                     return True
 
                 if watched in (self.top_bar, self.title_label):
@@ -463,10 +639,12 @@ class UnifiedSettingsWindow(QDialog):
 
             if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
                 self._resizing = False
+                self._resize_edge = None
                 self._resize_start_pos = None
+                self._resize_start_size = None
                 self._dragging = False
                 self._drag_start_pos = None
-                self.setCursor(QCursor(Qt.SizeVerCursor if in_resize_zone else Qt.ArrowCursor))
+                self.setCursor(QCursor(self._cursor_by_edge(resize_edge)))
 
         if watched in (self.scroll_area.viewport(), self.scroll_area.verticalScrollBar()):
             if event.type() in (QEvent.Enter, QEvent.Wheel):

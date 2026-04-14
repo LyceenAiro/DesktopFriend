@@ -87,9 +87,11 @@ if __name__ == "__main__":
             _log.INFO(f"已设置默认资源包: {selected_pack}")
 
     from ui.PetWindow import PetWindow, app
+    from module.life.runtime import start_life_loop
     from register import registerInit
     from Event.setting.system import ShowApp
 
     registerInit()
+    start_life_loop(app, interval_ms=1000)
     QTimer.singleShot(0, lambda: ShowApp(PetWindow))
     sys.exit(app.exec())

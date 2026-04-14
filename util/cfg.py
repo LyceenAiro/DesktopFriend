@@ -11,6 +11,7 @@ CONFIG_FILES = {
     "basic": CONFIG_DIR / "basic.cfg",
     "smart": CONFIG_DIR / "smart.cfg",
     "debug": CONFIG_DIR / "debug.cfg",
+    "life": CONFIG_DIR / "life.cfg",
 }
 
 # 默认配置值
@@ -37,6 +38,9 @@ DEFAULT_CONFIGS = {
         "toast_duration_ms": 10000,
         "developer_mode": False,
         "locale": "zh_cn",
+    },
+    "life": {
+        "life_enabled": False,
     },
 }
 

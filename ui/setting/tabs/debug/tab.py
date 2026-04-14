@@ -25,6 +25,7 @@ class DebugTab(QFrame):
         jump_callback: Callable[[], None],
         hide_callback: Callable[[], None],
         show_app_callback: Callable[[], None],
+        open_life_debug_callback: Callable[[], None],
         parent=None,
     ):
         super().__init__(parent)
@@ -152,9 +153,30 @@ class DebugTab(QFrame):
         quick_action_row.addStretch()
         action_layout.addLayout(quick_action_row)
 
+        expansion_card = create_section_card(
+            tr("settings.debug.card.expansion.title"),
+            tr("settings.debug.card.expansion.desc"),
+        )
+        expansion_layout = expansion_card.layout()
+
+        life_row = QHBoxLayout()
+        life_row.setSpacing(PREVIEW_ROW_SPACING)
+        life_label = QLabel(tr("settings.debug.life", "养成窗口"))
+        life_label.setObjectName("fieldLabel")
+        life_label.setFixedWidth(LABEL_WIDTH)
+        life_row.addWidget(life_label)
+
+        life_debug_btn = QPushButton(tr("settings.debug.life_debug", "打开养成调试"))
+        life_debug_btn.clicked.connect(open_life_debug_callback)
+        life_row.addWidget(life_debug_btn)
+        life_row.addStretch()
+        expansion_layout.addLayout(life_row)
+
+
         layout.addWidget(toast_card)
         layout.addWidget(debug_card)
         layout.addWidget(action_card)
+        layout.addWidget(expansion_card)
         layout.addStretch()
 
     def save_tab(self):

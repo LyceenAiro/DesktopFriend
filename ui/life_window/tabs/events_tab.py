@@ -1,0 +1,415 @@
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from ui.life_window.info_dialog import LifeInfoDialog
+from ui.life_window.sub_tab_bar import PaginatedSubTabBar
+from ui.setting.common import create_section_card
+from util.i18n import tr
+
+
+_OTHER_CLASS_ID = "__other__"
+
+
+class LifeEventsTab(QFrame):
+    tab_name = tr("life.tabs.events")
+
+    def __init__(
+        self,
+        fire_trigger: Callable[[str], dict[str, Any] | None],
+        get_trigger_detail: Callable[[str], dict[str, Any] | None],
+        get_trigger_cooldown_remaining: Callable[[str], float],
+        get_trigger_executing_remaining: Callable[[str], float],
+        can_fire_trigger: Callable[[str], tuple[bool, str]],
+        get_trigger_class_registry: Callable[[], dict[str, dict[str, Any]]],
+        feedback_callback: Callable[[str, str], None],
+        refresh_callback: Callable[[], None],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._triggers: list[dict[str, Any]] = []
+        self._developer_mode = False
+        self._fire_trigger = fire_trigger
+        self._get_trigger_detail = get_trigger_detail
+        self._get_trigger_cooldown_remaining = get_trigger_cooldown_remaining
+        self._get_trigger_executing_remaining = get_trigger_executing_remaining
+        self._can_fire_trigger = can_fire_trigger
+        self._get_trigger_class_registry = get_trigger_class_registry
+        self._feedback_callback = feedback_callback
+        self._refresh_callback = refresh_callback
+        self._rows: list[QFrame] = []
+        self._result_rows: list[QFrame] = []
+        self._active_class: str | None = None  # None = 全部
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(14)
+
+        # 子标签栏
+        self._sub_tab_bar = PaginatedSubTabBar(on_switch=self._switch_class, parent=self)
+        layout.addWidget(self._sub_tab_bar)
+
+        # 事件触发器卡片
+        trigger_card = create_section_card(tr("life.events.card.title"), tr("life.events.card.desc"))
+        card_layout = trigger_card.layout()
+
+        self.rows_container = QFrame()
+        self.rows_layout = QVBoxLayout(self.rows_container)
+        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.setSpacing(10)
+        card_layout.addWidget(self.rows_container)
+
+        layout.addWidget(trigger_card)
+
+        # 最近事件结果卡片
+        result_card = create_section_card(tr("life.events.result.title"), tr("life.events.result.desc"))
+        result_card_layout = result_card.layout()
+
+        self.result_container = QFrame()
+        self.result_layout = QVBoxLayout(self.result_container)
+        self.result_layout.setContentsMargins(0, 0, 0, 0)
+        self.result_layout.setSpacing(6)
+        result_card_layout.addWidget(self.result_container)
+
+        layout.addWidget(result_card)
+        layout.addStretch()
+
+        self._last_result: dict[str, Any] | None = None
+
+    def update_data(self, triggers: list[dict[str, Any]], developer_mode: bool = False) -> None:
+        self._triggers = list(triggers)
+        self._developer_mode = bool(developer_mode)
+        self._rebuild_sub_tabs()
+        self._rebuild_trigger_rows()
+
+    # ── 子标签 ──────────────────────────────────────────
+
+    def _rebuild_sub_tabs(self) -> None:
+        class_registry = self._get_trigger_class_registry()
+        present_classes: set[str] = set()
+        has_other = False
+        for trigger in self._triggers:
+            classes = trigger.get("classes", [])
+            if classes:
+                for cls in classes:
+                    present_classes.add(cls)
+            else:
+                has_other = True
+
+        if not present_classes and not has_other:
+            self._sub_tab_bar.set_buttons([])
+            return
+
+        items: list[tuple[str | None, str]] = [(None, tr("life.events.class.all"))]
+        for cls_id in sorted(present_classes):
+            cls_def = class_registry.get(cls_id, {})
+            i18n_key = cls_def.get("name_i18n_key", f"life.trigger_class.{cls_id}")
+            fallback = cls_def.get("name", cls_id)
+            label = tr(i18n_key, default=fallback)
+            items.append((cls_id, label))
+        if has_other:
+            items.append((_OTHER_CLASS_ID, tr("life.events.class.other")))
+
+        self._sub_tab_bar.set_buttons(items)
+        self._sub_tab_bar.set_active(self._active_class)
+
+    def _switch_class(self, cls_id: str | None) -> None:
+        self._active_class = cls_id
+        self._rebuild_trigger_rows()
+
+    def _get_filtered_triggers(self) -> list[dict[str, Any]]:
+        if self._active_class is None:
+            return self._triggers
+        if self._active_class == _OTHER_CLASS_ID:
+            return [t for t in self._triggers if not t.get("classes")]
+        return [t for t in self._triggers if self._active_class in t.get("classes", [])]
+
+    # ── 触发器行 ────────────────────────────────────────
+
+    def _rebuild_trigger_rows(self) -> None:
+        for row in self._rows:
+            self.rows_layout.removeWidget(row)
+            row.deleteLater()
+        self._rows.clear()
+
+        filtered = self._get_filtered_triggers()
+
+        if not filtered:
+            empty = QLabel(tr("life.events.empty"))
+            empty.setObjectName("helperText")
+            row = self._wrap_row(empty)
+            self.rows_layout.addWidget(row)
+            self._rows.append(row)
+            return
+
+        for trigger in filtered:
+            row = self._build_trigger_row(trigger)
+            self.rows_layout.addWidget(row)
+            self._rows.append(row)
+
+    def _build_trigger_row(self, trigger: dict[str, Any]) -> QFrame:
+        row = QFrame()
+        row.setObjectName("lifeEventRow")
+        row.setStyleSheet(
+            """
+            QFrame#lifeEventRow {
+                background: #1f1f1f;
+                border: 1px solid #3a3a3a;
+                border-radius: 8px;
+            }
+            QFrame#lifeEventRow QLabel {
+                background: transparent;
+                border: none;
+            }
+            """
+        )
+
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        row_layout.setSpacing(10)
+
+        text_block = QVBoxLayout()
+        text_block.setSpacing(3)
+
+        title = QLabel(trigger.get("name", trigger.get("id", "unknown")))
+        title.setStyleSheet("font-weight: 700; color: #f3f3f3; background: transparent; border: none;")
+        text_block.addWidget(title)
+
+        details: list[str] = []
+        if self._developer_mode:
+            details.append(f"ID: {trigger.get('id', '')}")
+
+        cooldown_remaining = float(trigger.get("cooldown_remaining", 0))
+        on_cooldown = bool(trigger.get("on_cooldown", False))
+        executing = bool(trigger.get("executing", False))
+
+        desc = trigger.get("desc", "")
+        if desc:
+            desc_label = QLabel(desc)
+            desc_label.setObjectName("helperText")
+            desc_label.setStyleSheet("color: #aaaaaa; background: transparent; border: none;")
+            desc_label.setWordWrap(True)
+            text_block.addWidget(desc_label)
+
+        if details:
+            subtitle = QLabel(" | ".join(details))
+            subtitle.setObjectName("helperText")
+            subtitle.setStyleSheet("background: transparent; border: none;")
+            text_block.addWidget(subtitle)
+
+        row_layout.addLayout(text_block, 1)
+
+        # 详情按钮
+        info_btn = QPushButton(tr("life.events.info"))
+        info_btn.setFixedWidth(72)
+        info_btn.clicked.connect(lambda: self._show_trigger_info(str(trigger.get("id", ""))))
+        row_layout.addWidget(info_btn)
+
+        # 触发按钮 — 与物品冷却一致：始终可点击，冷却/执行中时显示对应样式，点击时检查并toast提示
+        busy_style = (
+            "QPushButton { background-color: #4a4020; color: #b8a060; "
+            "border: 1px solid #6a5828; border-radius: 6px; }"
+            "QPushButton:hover { background-color: #5a4e28; }"
+            "QPushButton:pressed { background-color: #3a3018; }"
+        )
+        if executing:
+            fire_btn = QPushButton(tr("life.events.fire_executing_btn"))
+            fire_btn.setFixedWidth(72)
+            fire_btn.setStyleSheet(busy_style)
+        elif on_cooldown:
+            fire_btn = QPushButton(tr("life.events.fire_cooldown_btn"))
+            fire_btn.setFixedWidth(72)
+            fire_btn.setStyleSheet(busy_style)
+        else:
+            fire_btn = QPushButton(tr("life.events.fire"))
+            fire_btn.setObjectName("primaryButton")
+            fire_btn.setFixedWidth(72)
+        fire_btn.clicked.connect(lambda: self._on_fire_trigger(str(trigger.get("id", ""))))
+        row_layout.addWidget(fire_btn)
+
+        return row
+
+    def _wrap_row(self, widget) -> QFrame:
+        row = QFrame()
+        row.setObjectName("lifeEventRow")
+        row.setStyleSheet("QFrame#lifeEventRow { background: #1f1f1f; border: 1px solid #3a3a3a; border-radius: 8px; }")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        row_layout.addWidget(widget)
+        return row
+
+    def _on_fire_trigger(self, trigger_id: str) -> None:
+        # 与物品冷却一致：点击时实时检查冷却和互斥
+        remaining = self._get_trigger_cooldown_remaining(trigger_id)
+        if remaining > 0:
+            secs = int(remaining) + 1
+            self._feedback_callback(tr("life.events.fire_on_cooldown", seconds=secs), "warning")
+            return
+        can, reason = self._can_fire_trigger(trigger_id)
+        if not can:
+            if reason == "executing":
+                exec_remaining = self._get_trigger_executing_remaining(trigger_id)
+                if exec_remaining > 0:
+                    secs = int(exec_remaining) + 1
+                    self._feedback_callback(
+                        tr("life.events.fire_executing_remaining", seconds=secs), "warning"
+                    )
+                else:
+                    self._feedback_callback(tr("life.events.fire_executing"), "warning")
+                return
+            if reason.startswith("mutex:"):
+                mutex_id = reason[6:]
+                self._feedback_callback(tr("life.events.fire_mutex_blocked", trigger=mutex_id), "warning")
+            else:
+                self._feedback_callback(tr("life.events.fire_failed"), "error")
+            return
+
+        result = self._fire_trigger(trigger_id)
+        if result is None:
+            self._feedback_callback(tr("life.events.fire_failed"), "error")
+            return
+
+        self._last_result = result
+        if result.get("pending"):
+            self._show_result_log(result)
+            self._feedback_callback(
+                tr("life.events.fire_started").replace("{name}", result.get("trigger_name", trigger_id)),
+                "info",
+            )
+        else:
+            self._show_result_log(result)
+            self._feedback_callback(
+                tr("life.events.fire_success").replace("{name}", result.get("trigger_name", trigger_id)),
+                "info",
+            )
+        self._refresh_callback()
+
+    def _show_result_log(self, result: dict[str, Any]) -> None:
+        for row in self._result_rows:
+            self.result_layout.removeWidget(row)
+            row.deleteLater()
+        self._result_rows.clear()
+
+        if result.get("pending"):
+            label = QLabel(tr("life.events.result.pending").replace("{name}", result.get("trigger_name", "")))
+            label.setObjectName("helperText")
+            label.setStyleSheet("color: #e0c060; background: transparent; border: none;")
+            row = self._wrap_row(label)
+            self.result_layout.addWidget(row)
+            self._result_rows.append(row)
+            return
+
+        results = result.get("results", [])
+        if not results:
+            label = QLabel(tr("life.events.result.nothing"))
+            label.setObjectName("helperText")
+            row = self._wrap_row(label)
+            self.result_layout.addWidget(row)
+            self._result_rows.append(row)
+            return
+
+        # 显示触发器名称为标题
+        header = QLabel(f"▶ {result.get('trigger_name', '')}")
+        header.setStyleSheet("font-weight: 700; color: #e0c060; background: transparent; border: none;")
+        header_row = self._wrap_row(header)
+        self.result_layout.addWidget(header_row)
+        self._result_rows.append(header_row)
+
+        for entry in results:
+            entry_type = entry.get("type", "")
+            if entry_type == "outcome":
+                text = f"🎲 {entry.get('name', entry.get('id', ''))}"
+                desc = entry.get("desc", "")
+                if desc:
+                    text += f" — {desc}"
+            elif entry_type == "item":
+                text = f"📦 {tr('life.events.result.got_item')}: {entry.get('id', '')} x{entry.get('count', 1)}"
+            elif entry_type == "buff":
+                text = f"✨ {tr('life.events.result.got_buff')}: {entry.get('id', '')}"
+            else:
+                text = str(entry)
+
+            label = QLabel(text)
+            label.setWordWrap(True)
+            label.setStyleSheet("color: #d0d0d0; background: transparent; border: none;")
+            entry_row = self._wrap_row(label)
+            self.result_layout.addWidget(entry_row)
+            self._result_rows.append(entry_row)
+
+    def _show_trigger_info(self, trigger_id: str) -> None:
+        detail = self._get_trigger_detail(trigger_id)
+        if not detail:
+            self._feedback_callback(tr("life.events.info_missing"), "error")
+            return
+
+        debug_lines = None
+        if self._developer_mode:
+            debug_lines = self._build_trigger_debug_lines(detail)
+
+        desc = str(detail.get("desc", "")).strip()
+        duration_s = detail.get("duration_s")
+        try:
+            dur_val = float(duration_s) if duration_s is not None else 0
+        except Exception:
+            dur_val = 0
+        if dur_val > 0:
+            dur_text = tr("life.events.info.duration", seconds=int(dur_val))
+            desc = f"{desc}\n\n{dur_text}" if desc else dur_text
+
+        dialog = LifeInfoDialog(
+            str(detail.get("name", "")),
+            desc,
+            debug_lines=debug_lines,
+            parent=self,
+        )
+        dialog.exec()
+
+    def _build_trigger_debug_lines(self, detail: dict[str, Any]) -> list[str]:
+        lines = [
+            f"ID: {detail.get('id', '')}",
+            f"{tr('life.events.debug.cooldown')}: {detail.get('cooldown_s', 0)}s",
+            f"{tr('life.events.debug.duration')}: {detail.get('duration_s', 0)}s",
+            f"{tr('life.events.debug.mutex')}: {', '.join(detail.get('mutex', [])) or '-'}",
+        ]
+
+        guaranteed = detail.get("guaranteed", {})
+        if isinstance(guaranteed, dict):
+            g_items = guaranteed.get("items", [])
+            g_buffs = guaranteed.get("buffs", [])
+            g_outcomes = guaranteed.get("outcomes", [])
+            if g_items or g_buffs or g_outcomes:
+                lines.append(f"{tr('life.events.debug.guaranteed')}:")
+                for item in g_items:
+                    if isinstance(item, dict):
+                        lines.append(f"  {tr('life.events.result.got_item')}: {item.get('id', '')} x{item.get('count', 1)}")
+                for buff in g_buffs:
+                    bid = str(buff) if not isinstance(buff, dict) else str(buff.get("id", ""))
+                    lines.append(f"  buff: {bid}")
+                for outcome in g_outcomes:
+                    oid = str(outcome) if not isinstance(outcome, dict) else str(outcome.get("id", ""))
+                    lines.append(f"  outcome: {oid}")
+
+        pools = detail.get("random_pools", [])
+        if isinstance(pools, list):
+            for pi, pool in enumerate(pools):
+                if not isinstance(pool, dict):
+                    continue
+                entries = pool.get("entries", [])
+                lines.append(f"{tr('life.events.debug.pool')} #{pi + 1} ({len(entries)} entries):")
+                for entry in entries:
+                    if isinstance(entry, dict):
+                        lines.append(
+                            f"  [{entry.get('type', '?')}] {entry.get('id', '?')} "
+                            f"chance={entry.get('chance', 0)}%"
+                        )
+
+        return lines

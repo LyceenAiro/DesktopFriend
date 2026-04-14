@@ -5,6 +5,7 @@ from Event.setting.system import *
 
 from Event.setting.system import _create_icon_from_base64
 from resources.image_resources import LOGO_PNG
+from util.cfg import load_config
 from util.i18n import tr
 
 from ui.PetWindow import DesktopPet, app
@@ -54,6 +55,21 @@ def _open_settings_window(self: DesktopPet):
     self.settings_window.raise_()
     self.settings_window.activateWindow()
 
+
+def _open_life_window(self: DesktopPet):
+    from ui.life import LifeWindow
+
+    existing = getattr(self, "life_window", None)
+    if existing is not None and existing.isVisible():
+        existing.raise_()
+        existing.activateWindow()
+        return
+
+    self.life_window = LifeWindow(self)
+    self.life_window.show()
+    self.life_window.raise_()
+    self.life_window.activateWindow()
+
 def menu_init(self: DesktopPet):
     self.menu = QMenu(self)
     self.menu.setStyleSheet(MENU_STYLE)
@@ -66,6 +82,10 @@ def menu_init(self: DesktopPet):
     settings.triggered.connect(lambda: _open_settings_window(self))
     self.menu.addAction(settings)
 
+    life_panel = QAction(tr("menu.life"), self)
+    life_panel.triggered.connect(lambda: _open_life_window(self))
+    self.menu.addAction(life_panel)
+
     self.menu.addSeparator()
 
     quit = QAction(tr("menu.quit"), self)
@@ -77,9 +97,16 @@ def menu_init(self: DesktopPet):
     max_text_width = max(
         fm.horizontalAdvance(hide.text()),
         fm.horizontalAdvance(settings.text()),
+        fm.horizontalAdvance(life_panel.text()),
         fm.horizontalAdvance(quit.text()),
     )
     self.menu.setMinimumWidth(max_text_width + 56)
+
+    def _update_life_panel_visibility():
+        enabled = bool(load_config("life").get("life_enabled", True))
+        life_panel.setVisible(enabled)
+
+    self.menu.aboutToShow.connect(_update_life_panel_visibility)
 
 def tray_init(self: DesktopPet):
     self.tray_icon = QSystemTrayIcon(self)
