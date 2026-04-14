@@ -218,5 +218,16 @@ class LifeEffectsTab(QFrame):
                 f"data: {per_tick}",
             ]
 
+            raw = detail.get("raw") if isinstance(detail.get("raw"), dict) else {}
+            cap_lines: list[str] = []
+            for key, value in raw.items():
+                if not isinstance(key, str):
+                    continue
+                if key.endswith("_max2") or key.endswith("_max") or key.endswith("_min"):
+                    cap_lines.append(f"- {key}: {value}")
+            if cap_lines:
+                debug_lines.append(f"{tr('life.inventory.info.effect.caps')}:")
+                debug_lines.extend(cap_lines)
+
         dialog = LifeInfoDialog(effect_name, effect_desc, debug_lines, self)
         dialog.exec()

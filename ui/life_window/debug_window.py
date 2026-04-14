@@ -734,10 +734,22 @@ class LifeDebugWindow(QDialog):
         was_at_bottom = prev_value >= max(0, scroll.maximum() - 2)
 
         lines = [f"[{tr('life.debug.section.states')}]",]
-        for k, v in self.life.profile.states.items():
-            vmax = self.life.profile.state_max.get(k, 0)
-            vmin = self.life.profile.state_min.get(k, 0)
-            lines.append(f"{k}: {v:.2f} (min={vmin:.2f}, max={vmax:.2f})")
+        for row in self.life.get_state_runtime_snapshot():
+            lines.append(
+                f"{row['id']}: {float(row['value']):.2f} "
+                f"(min={float(row['min']):.2f}, max={float(row['max']):.2f}, base_max={float(row['base_max']):.2f})"
+            )
+            lines.append(
+                "  "
+                + tr(
+                    "life.debug.state.detail",
+                    tick=f"{float(row['tick_delta']):+.2f}",
+                    flat=f"{float(row['max_flat_delta']):+.2f}",
+                    pct_net=f"{float(row['max_percent_net']):+.2f}%",
+                    pct_add=f"{float(row['max_percent_add']):+.2f}%",
+                    pct_sub=f"{float(row['max_percent_sub']):+.2f}%",
+                )
+            )
 
         lines.append(f"\n[{tr('life.debug.section.nutrition')}]")
         nutrition_rows = self.life.get_nutrition_snapshot()

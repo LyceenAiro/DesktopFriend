@@ -93,12 +93,14 @@ class LifeSystem:
         self._item_cooldowns: dict[str, float] = {}  # item_id → 可用时间戳 (time.time())
         self._trigger_cooldowns: dict[str, float] = {}  # trigger_id → 可用时间戳
         self._trigger_executing: dict[str, float] = {}  # trigger_id → 完成时间戳 (正在执行中)
+        self._completed_trigger_results: list[dict[str, Any]] = []  # 执行完成事件队列（供 UI 消费）
 
         self.state_definitions: dict[str, dict[str, Any]] = self._load_state_definitions()
         self.nutrition_definitions: dict[str, dict[str, Any]] = self._load_nutrition_definitions()
 
         self._attr_cap_bonus_max: dict[str, float] = {k: 0.0 for k in self.state_keys}
         self._attr_cap_bonus_min: dict[str, float] = {k: 0.0 for k in self.state_keys}
+        self._state_runtime_breakdown: dict[str, dict[str, float]] = {}
 
         self.profile = self._create_default_profile()
         self.reload_registries()
@@ -1253,9 +1255,92 @@ class LifeSystem:
         }
         min_caps = {state: float(self.state_definitions.get(state, {}).get("min", 0.0)) for state in self.state_keys}
 
-        self._apply_cap_modifiers_to_caps(self._static_cap_modifiers, max_caps, min_caps)
+        breakdown: dict[str, dict[str, float]] = {
+            state: {
+                "max_flat_delta": 0.0,
+                "min_flat_delta": 0.0,
+                "max_fixed_delta": 0.0,
+                "min_fixed_delta": 0.0,
+                "max_percent_value_delta": 0.0,
+                "min_percent_value_delta": 0.0,
+                "max_percent_add": 0.0,
+                "max_percent_sub": 0.0,
+                "min_percent_add": 0.0,
+                "min_percent_sub": 0.0,
+                "tick_delta": 0.0,
+            }
+            for state in self.state_keys
+        }
+
+        def _record_percent(state: str, mode: str, raw_value: Any) -> None:
+            percent = self._parse_percent_value(raw_value)
+            if percent is None:
+                return
+            if mode == "max":
+                if percent >= 0:
+                    breakdown[state]["max_percent_add"] += percent
+                else:
+                    breakdown[state]["max_percent_sub"] += percent
+            elif mode == "min":
+                if percent >= 0:
+                    breakdown[state]["min_percent_add"] += percent
+                else:
+                    breakdown[state]["min_percent_sub"] += percent
+
+        def _apply_one_modifier(mode: str, state: str, raw_value: Any) -> None:
+            if state not in max_caps or state not in min_caps:
+                return
+
+            if mode == "max":
+                before = max_caps[state]
+                delta = self._to_delta(raw_value, before)
+                max_caps[state] = before + delta
+                breakdown[state]["max_flat_delta"] += delta
+                percent = self._parse_percent_value(raw_value)
+                if percent is None:
+                    breakdown[state]["max_fixed_delta"] += delta
+                else:
+                    breakdown[state]["max_percent_value_delta"] += delta
+                _record_percent(state, mode, raw_value)
+                return
+
+            if mode == "min":
+                before = min_caps[state]
+                delta = self._to_delta(raw_value, before)
+                min_caps[state] = before + delta
+                breakdown[state]["min_flat_delta"] += delta
+                percent = self._parse_percent_value(raw_value)
+                if percent is None:
+                    breakdown[state]["min_fixed_delta"] += delta
+                else:
+                    breakdown[state]["min_percent_value_delta"] += delta
+                _record_percent(state, mode, raw_value)
+                return
+
+            if mode == "max2":
+                before = max_caps[state]
+                max_caps[state] = before * self._to_multiplier(raw_value)
+                delta = max_caps[state] - before
+                breakdown[state]["max_flat_delta"] += delta
+                breakdown[state]["max_percent_value_delta"] += delta
+
+                percent = self._parse_percent_value(raw_value)
+                if percent is None:
+                    try:
+                        percent = (self._to_multiplier(raw_value) - 1.0) * 100.0
+                    except Exception:
+                        percent = None
+                if percent is not None:
+                    if percent >= 0:
+                        breakdown[state]["max_percent_add"] += percent
+                    else:
+                        breakdown[state]["max_percent_sub"] += percent
+
+        for mode, state, raw_value in self._static_cap_modifiers:
+            _apply_one_modifier(mode, state, raw_value)
         for effect in self.profile.active_effects:
-            self._apply_cap_modifiers_to_caps(effect.cap_modifiers, max_caps, min_caps)
+            for mode, state, raw_value in effect.cap_modifiers:
+                _apply_one_modifier(mode, state, raw_value)
 
         self._attr_cap_bonus_max = {k: 0.0 for k in self.state_keys}
         self._attr_cap_bonus_min = {k: 0.0 for k in self.state_keys}
@@ -1276,18 +1361,29 @@ class LifeSystem:
                     if key.endswith("_max"):
                         base = key[:-4]
                         if base in max_caps:
-                            delta = self._to_delta(value, max_caps[base])
+                            before = max_caps[base]
+                            delta = self._to_delta(value, before)
+                            max_caps[base] = before + delta
                             self._attr_cap_bonus_max[base] += delta
+                            breakdown[base]["max_flat_delta"] += delta
+                            if self._parse_percent_value(value) is None:
+                                breakdown[base]["max_fixed_delta"] += delta
+                            else:
+                                breakdown[base]["max_percent_value_delta"] += delta
+                            _record_percent(base, "max", value)
                     elif key.endswith("_min"):
                         base = key[:-4]
                         if base in min_caps:
-                            delta = self._to_delta(value, min_caps[base])
+                            before = min_caps[base]
+                            delta = self._to_delta(value, before)
+                            min_caps[base] = before + delta
                             self._attr_cap_bonus_min[base] += delta
-
-        for state, bonus in self._attr_cap_bonus_max.items():
-            max_caps[state] += bonus
-        for state, bonus in self._attr_cap_bonus_min.items():
-            min_caps[state] += bonus
+                            breakdown[base]["min_flat_delta"] += delta
+                            if self._parse_percent_value(value) is None:
+                                breakdown[base]["min_fixed_delta"] += delta
+                            else:
+                                breakdown[base]["min_percent_value_delta"] += delta
+                            _record_percent(base, "min", value)
 
         for state in self.state_keys:
             if min_caps[state] > max_caps[state]:
@@ -1295,6 +1391,103 @@ class LifeSystem:
             self.profile.state_min[state] = min_caps[state]
             self.profile.state_max[state] = max_caps[state]
             self._clamp_state(state)
+
+        tick_deltas = self._collect_state_tick_deltas()
+        for state, delta in tick_deltas.items():
+            if state in breakdown:
+                breakdown[state]["tick_delta"] = float(delta)
+        self._state_runtime_breakdown = breakdown
+
+    def _parse_percent_value(self, value: Any) -> float | None:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.endswith("%"):
+                try:
+                    return float(text[:-1])
+                except Exception:
+                    return None
+        return None
+
+    def _collect_state_tick_deltas(self) -> dict[str, float]:
+        totals: dict[str, float] = {state: 0.0 for state in self.state_keys}
+
+        for effect in self.profile.active_effects:
+            for state, delta in effect.per_tick.items():
+                if state in totals:
+                    totals[state] += float(delta)
+
+        for nutrition_key, definition in self.nutrition_definitions.items():
+            current = float(self.profile.nutrition.get(nutrition_key, definition.get("default", 0.0)))
+            for effect_def in definition.get("effects", []):
+                if not isinstance(effect_def, dict):
+                    continue
+                if effect_def.get("buff_id"):
+                    continue
+
+                min_v = float(effect_def.get("min", float("-inf")))
+                max_v = float(effect_def.get("max", float("inf")))
+                if not (min_v <= current < max_v):
+                    continue
+
+                for state, delta in dict(effect_def.get("states", {})).items():
+                    if state in totals:
+                        totals[state] += float(delta)
+
+        return totals
+
+    def get_state_runtime_snapshot(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        tick_deltas = self._collect_state_tick_deltas()
+
+        for state in self.state_keys:
+            definition = self.state_definitions.get(state, {})
+            base_min = float(definition.get("min", 0.0))
+            base_max = float(definition.get("max", GLOBAL_VALUE_MAX))
+
+            current_value = float(self.profile.states.get(state, definition.get("default", 0.0)))
+            current_min = float(self.profile.state_min.get(state, base_min))
+            current_max = float(self.profile.state_max.get(state, base_max))
+
+            detail = self._state_runtime_breakdown.get(state, {})
+            max_flat_delta = float(detail.get("max_flat_delta", current_max - base_max))
+            min_flat_delta = float(detail.get("min_flat_delta", current_min - base_min))
+            max_fixed_delta = float(detail.get("max_fixed_delta", max_flat_delta))
+            min_fixed_delta = float(detail.get("min_fixed_delta", min_flat_delta))
+            max_percent_value_delta = float(detail.get("max_percent_value_delta", max_flat_delta - max_fixed_delta))
+            min_percent_value_delta = float(detail.get("min_percent_value_delta", min_flat_delta - min_fixed_delta))
+            max_percent_add = float(detail.get("max_percent_add", 0.0))
+            max_percent_sub = float(detail.get("max_percent_sub", 0.0))
+            min_percent_add = float(detail.get("min_percent_add", 0.0))
+            min_percent_sub = float(detail.get("min_percent_sub", 0.0))
+            tick_delta = float(detail.get("tick_delta", tick_deltas.get(state, 0.0)))
+
+            rows.append(
+                {
+                    "id": state,
+                    "name": tr(str(definition.get("i18n_key") or f"life.state.{state}"), default=str(definition.get("name") or state)),
+                    "value": current_value,
+                    "base_min": base_min,
+                    "base_max": base_max,
+                    "min": current_min,
+                    "max": current_max,
+                    "overflow": max(0.0, current_max - base_max),
+                    "max_flat_delta": max_flat_delta,
+                    "min_flat_delta": min_flat_delta,
+                    "max_fixed_delta": max_fixed_delta,
+                    "min_fixed_delta": min_fixed_delta,
+                    "max_percent_value_delta": max_percent_value_delta,
+                    "min_percent_value_delta": min_percent_value_delta,
+                    "max_percent_add": max_percent_add,
+                    "max_percent_sub": max_percent_sub,
+                    "min_percent_add": min_percent_add,
+                    "min_percent_sub": min_percent_sub,
+                    "max_percent_net": max_percent_add + max_percent_sub,
+                    "min_percent_net": min_percent_add + min_percent_sub,
+                    "tick_delta": tick_delta,
+                }
+            )
+
+        return rows
 
     def _change_state(self, state: str, delta: float) -> None:
         if state not in self.profile.states:
@@ -1555,7 +1748,17 @@ class LifeSystem:
             if now >= self._trigger_executing[trigger_id]:
                 result = self._complete_trigger(trigger_id)
                 completed.append(result)
+        if completed:
+            self._completed_trigger_results.extend(completed)
         return completed
+
+    def pop_completed_trigger_results(self) -> list[dict[str, Any]]:
+        """取出并清空执行完成事件队列。"""
+        if not self._completed_trigger_results:
+            return []
+        payload = list(self._completed_trigger_results)
+        self._completed_trigger_results.clear()
+        return payload
 
     def _execute_event_guaranteed(self, record: dict[str, Any], result_log: list[dict[str, Any]]) -> None:
         guaranteed = record.get("guaranteed")
@@ -1845,6 +2048,7 @@ class LifeSystem:
                 self._trigger_cooldowns[str(trigger_id)] = now + r
 
         self._trigger_executing.clear()
+        self._completed_trigger_results.clear()
         for trigger_id, remaining in data.get("trigger_executing", {}).items():
             try:
                 r = float(remaining)
@@ -1861,6 +2065,7 @@ class LifeSystem:
         self._item_cooldowns.clear()
         self._trigger_cooldowns.clear()
         self._trigger_executing.clear()
+        self._completed_trigger_results.clear()
         self.profile = self._create_default_profile()
         self._sync_managed_nutrition_buffs()
         self.save("default")

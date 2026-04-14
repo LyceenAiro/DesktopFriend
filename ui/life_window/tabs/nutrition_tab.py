@@ -81,7 +81,19 @@ class LifeNutritionTab(QFrame):
                 percent = self._MIN_VISIBLE_PERCENT
 
             self.progress_rows[nutrition_id].set_ratios(percent / 100.0, 1.0)
-            self.progress_rows[nutrition_id].set_detail(f"{int(round(value))}/{int(round(vmax))}")
+            self.progress_rows[nutrition_id].set_detail(
+                tr(
+                    "life.nutrition.popup.value",
+                    value=f"{int(round(value))}",
+                    vmax=f"{int(round(vmax))}",
+                )
+            )
+            self.progress_rows[nutrition_id].set_legacy_metrics(
+                tick_delta=-decay,
+                fixed_delta=0.0,
+                percent_delta=0.0,
+                percent_value=0.0,
+            )
 
             matched_effects: list[str] = []
             for effect in list(nutrition_def.get("effects", [])):

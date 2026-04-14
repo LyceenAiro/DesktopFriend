@@ -198,7 +198,10 @@ class LifeWindow(QDialog):
         state_definitions = self.life.get_state_definitions()
         nutrition_definitions = self.life.get_nutrition_definitions()
         self.tab_widgets = {
-            LifeStatesTab.tab_name: LifeStatesTab(state_definitions=state_definitions),
+            LifeStatesTab.tab_name: LifeStatesTab(
+                state_definitions=state_definitions,
+                get_state_runtime_snapshot=self.life.get_state_runtime_snapshot,
+            ),
             LifeNutritionTab.tab_name: LifeNutritionTab(nutrition_definitions=nutrition_definitions),
             LifeAttrsTab.tab_name: LifeAttrsTab(),
             LifeInventoryTab.tab_name: LifeInventoryTab(
@@ -287,6 +290,8 @@ class LifeWindow(QDialog):
         self.pin_button.setIcon(create_pin_icon(color, active=self._always_on_top))
 
     def refresh_view(self):
+        completed_triggers = self.life.pop_completed_trigger_results()
+
         profile = self.life.profile
         nutrition = self.life.get_nutrition_snapshot()
         items = self.life.get_inventory_snapshot()
@@ -308,7 +313,7 @@ class LifeWindow(QDialog):
             attrs_tab.update_data(profile)
 
         # 智能刷新：数据有变化时始终更新（包括当前在该标签页时），无变化时仅在非当前标签页时更新
-        current_item_sig = tuple((i["id"], i["count"]) for i in items)
+        current_item_sig = tuple((i["id"], i["count"], i.get("on_cooldown", False)) for i in items)
         current_effect_sig = tuple(e.effect_id for e in effects)
         current_trigger_sig = tuple((t["id"], t.get("on_cooldown"), t.get("can_fire"), t.get("executing")) for t in triggers)
         inv_changed = current_item_sig != getattr(self, "_last_item_sig", None)
@@ -326,9 +331,16 @@ class LifeWindow(QDialog):
                 self._last_effect_sig = current_effect_sig
 
         if events_tab is not None:
-            if trg_changed or self.active_tab != LifeEventsTab.tab_name:
+            if completed_triggers or trg_changed or self.active_tab != LifeEventsTab.tab_name:
                 events_tab.update_data(triggers, self.developer_mode)
                 self._last_trigger_sig = current_trigger_sig
+
+        # 任意标签页都提示“执行完成”
+        if completed_triggers:
+            latest_name = str(completed_triggers[-1].get("trigger_name", "")).strip() or str(
+                completed_triggers[-1].get("trigger_id", "")
+            )
+            self._set_feedback(tr("life.events.completed", name=latest_name), "info")
 
     def _is_in_resize_zone(self, local_pos) -> bool:
         return local_pos.y() >= self.height() - self._resize_grip_size
