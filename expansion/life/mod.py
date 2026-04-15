@@ -318,6 +318,7 @@ class LifeModRegistry:
         status_dir = mod_dir / "status"
         buff_dir = mod_dir / "buff"
         item_dir = mod_dir / "item"
+        nutrition_dir = mod_dir / "nutrition"
         lang_dir = mod_dir / "lang"
         event_trigger_dir = mod_dir / "event_trigger"
         event_outcome_dir = mod_dir / "event_outcome"
@@ -327,6 +328,8 @@ class LifeModRegistry:
             result["buff_dir"] = buff_dir
         if item_dir.exists():
             result["item_dir"] = item_dir
+        if nutrition_dir.exists():
+            result["nutrition_dir"] = nutrition_dir
         if lang_dir.exists():
             result["lang_dir"] = lang_dir
         if event_trigger_dir.exists():
@@ -362,7 +365,11 @@ class LifeModRegistry:
             if resource_dirs:
                 loaded_resource_dirs[mod_id] = resource_dirs
             if life_system is not None and resource_dirs:
-                life_resource_dirs = {k: v for k, v in resource_dirs.items() if k in {"status_dir", "buff_dir", "item_dir", "event_trigger_dir", "event_outcome_dir"}}
+                life_resource_dirs = {
+                    k: v
+                    for k, v in resource_dirs.items()
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir"}
+                }
                 if life_resource_dirs:
                     life_system.attach_mod_resource_dirs(reload=False, **life_resource_dirs)
                 life_system.reload_registries()
@@ -392,7 +399,11 @@ class LifeModRegistry:
 
             resource_dirs = loaded_resource_dirs.get(mod_id, {})
             if life_system is not None and resource_dirs:
-                life_resource_dirs = {k: v for k, v in resource_dirs.items() if k in {"status_dir", "buff_dir", "item_dir", "event_trigger_dir", "event_outcome_dir"}}
+                life_resource_dirs = {
+                    k: v
+                    for k, v in resource_dirs.items()
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir"}
+                }
                 if life_resource_dirs:
                     life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)
                     life_system.reload_registries()
@@ -423,7 +434,11 @@ class LifeModRegistry:
             self._loaded_mods.clear()
             if life_system is not None:
                 for resource_dirs in loaded_resource_dirs.values():
-                    life_resource_dirs = {k: v for k, v in resource_dirs.items() if k in {"status_dir", "buff_dir", "item_dir"}}
+                    life_resource_dirs = {
+                        k: v
+                        for k, v in resource_dirs.items()
+                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir"}
+                    }
                     if life_resource_dirs:
                         life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)
                     if "lang_dir" in resource_dirs:

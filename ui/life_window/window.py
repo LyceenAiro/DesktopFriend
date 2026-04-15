@@ -221,6 +221,7 @@ class LifeWindow(QDialog):
             LifeEventsTab.tab_name: LifeEventsTab(
                 fire_trigger=self.life.fire_trigger,
                 get_trigger_detail=self.life.get_event_trigger_detail,
+                get_item_display_name=self.life.get_item_display_name,
                 get_trigger_cooldown_remaining=self.life.get_trigger_cooldown_remaining,
                 get_trigger_executing_remaining=self.life.get_trigger_executing_remaining,
                 can_fire_trigger=self.life.can_fire_trigger,
@@ -310,7 +311,7 @@ class LifeWindow(QDialog):
         if nutrition_tab is not None:
             nutrition_tab.update_data(nutrition)
         if attrs_tab is not None:
-            attrs_tab.update_data(profile)
+            attrs_tab.update_data(self.life.get_attr_snapshot())
 
         # 智能刷新：数据有变化时始终更新（包括当前在该标签页时），无变化时仅在非当前标签页时更新
         current_item_sig = tuple((i["id"], i["count"], i.get("on_cooldown", False)) for i in items)

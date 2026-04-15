@@ -139,7 +139,7 @@ class SmartConfigTab(QFrame):
         }
         save_config("smart", config)
 
-        _log.INFO(
+        _log.DEBUG(
             f"智能配置已保存: 范围={PetWindow.max_move_range}, 检查间隔={auto_walk.check_time}ms, "
             f"空闲阈值={auto_walk.idle_threshold}s, 权重(左/右/跳)="
             f"{auto_walk._walk_left_per}/{auto_walk._walk_right_per}/{auto_walk._jump_per}, "

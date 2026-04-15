@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLineEdit, QLabel, QPushButton, QVBoxLayout
 
 from ui.life_window.info_dialog import LifeInfoDialog
 from ui.life_window.sub_tab_bar import PaginatedSubTabBar
@@ -16,6 +16,14 @@ _OTHER_CLASS_ID = "__other__"
 
 class LifeEffectsTab(QFrame):
     tab_name = tr("life.tabs.effects")
+    _CONTROL_HEIGHT = 28
+    _SEARCH_STYLE = (
+        "QLineEdit { background: #1f1f1f; color: #f0f0f0; border: 1px solid #3a3a3a; "
+        "border-radius: 7px; padding: 0 10px; min-height: 26px; max-height: 26px; }"
+        "QLineEdit:focus { border: 1px solid #5f8fc8; background: #252525; }"
+        "QToolTip { background-color: #111820; color: #b9d7ee; "
+        "border: 1px solid #2e4d6b; border-radius: 10px; padding: 8px 10px; }"
+    )
 
     def __init__(
         self,
@@ -32,6 +40,7 @@ class LifeEffectsTab(QFrame):
         self._get_buff_classes = get_buff_classes
         self._rows: list[QFrame] = []
         self._active_class: str | None = None  # None = 全部
+        self._search_text: str = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -40,6 +49,17 @@ class LifeEffectsTab(QFrame):
         # 子标签栏
         self._sub_tab_bar = PaginatedSubTabBar(on_switch=self._switch_class, parent=self)
         layout.addWidget(self._sub_tab_bar)
+
+        self._search_input = QLineEdit(self)
+        self._search_input.setPlaceholderText(tr("life.search.simple_placeholder"))
+        self._search_input.setToolTip(tr("life.search.advanced_tip"))
+        self._search_input.setStyleSheet(self._SEARCH_STYLE)
+        self._search_input.setFixedHeight(self._CONTROL_HEIGHT)
+        self._search_input.textChanged.connect(self._on_search_changed)
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(18, 0, 18, 0)
+        search_row.addWidget(self._search_input)
+        layout.addLayout(search_row)
 
         effects_card = create_section_card(tr("life.effects.card.title"), tr("life.effects.card.desc"))
         card_layout = effects_card.layout()
@@ -96,10 +116,71 @@ class LifeEffectsTab(QFrame):
 
     def _get_filtered_effects(self) -> list:
         if self._active_class is None:
-            return self._effects
-        if self._active_class == _OTHER_CLASS_ID:
-            return [e for e in self._effects if not self._get_buff_classes(e.effect_id)]
-        return [e for e in self._effects if self._active_class in self._get_buff_classes(e.effect_id)]
+            base = self._effects
+        elif self._active_class == _OTHER_CLASS_ID:
+            base = [e for e in self._effects if not self._get_buff_classes(e.effect_id)]
+        else:
+            base = [e for e in self._effects if self._active_class in self._get_buff_classes(e.effect_id)]
+
+        tokens = self._parse_search_tokens(self._search_text)
+        if not tokens:
+            return base
+
+        return [e for e in base if self._match_effect_query_tokens(e, tokens)]
+
+    def _on_search_changed(self, text: str) -> None:
+        self._search_text = text or ""
+        self._rebuild_effect_rows()
+
+    @staticmethod
+    def _fuzzy_match(text: str, query: str) -> bool:
+        source = (text or "").strip().lower()
+        target = (query or "").strip().lower()
+        if not target:
+            return True
+        idx = 0
+        for ch in source:
+            if idx < len(target) and ch == target[idx]:
+                idx += 1
+                if idx == len(target):
+                    return True
+        return False
+
+    @staticmethod
+    def _parse_search_tokens(text: str) -> list[tuple[str, str]]:
+        tokens: list[tuple[str, str]] = []
+        for raw in (text or "").strip().split():
+            mode = "name"
+            body = raw
+            if raw.startswith("@"):
+                mode = "id"
+                body = raw[1:]
+            elif raw.startswith("#"):
+                mode = "detail"
+                body = raw[1:]
+
+            body = body.replace("_", " ").strip()
+            if not body:
+                continue
+            tokens.append((mode, body))
+        return tokens
+
+    def _match_effect_query_tokens(self, effect, tokens: list[tuple[str, str]]) -> bool:
+        name = str(getattr(effect, "effect_name", "") or "")
+        desc = str(getattr(effect, "effect_desc", "") or "")
+        effect_id = str(getattr(effect, "effect_id", "") or "")
+
+        for mode, query in tokens:
+            if mode == "id":
+                if not self._fuzzy_match(effect_id, query):
+                    return False
+            elif mode == "detail":
+                if not self._fuzzy_match(desc, query):
+                    return False
+            else:
+                if not self._fuzzy_match(name, query):
+                    return False
+        return True
 
     # ── 效果行 ──────────────────────────────────────────
 
@@ -159,12 +240,19 @@ class LifeEffectsTab(QFrame):
 
         if self._developer_mode:
             per_tick = {k: int(round(float(v))) for k, v in effect.per_tick.items()}
+            attr_mods = {k: v for k, v in getattr(effect, "attr_modifiers", {}).items()}
+            data_parts: list[str] = []
+            if per_tick:
+                data_parts.append(f"tick={per_tick}")
+            if attr_mods:
+                data_parts.append(f"attrs={attr_mods}")
+            data_str = ", ".join(data_parts) if data_parts else "—"
             subtitle = QLabel(
                 tr(
                     "life.effects.row.detail",
                     tick=int(effect.remaining_ticks),
                     rule=str(effect.stack_rule),
-                    data=str(per_tick),
+                    data=data_str,
                 )
             )
             subtitle.setObjectName("helperText")
@@ -217,6 +305,10 @@ class LifeEffectsTab(QFrame):
                 f"rule: {effect.stack_rule}",
                 f"data: {per_tick}",
             ]
+
+            attr_mods = {k: v for k, v in getattr(effect, "attr_modifiers", {}).items()}
+            if attr_mods:
+                debug_lines.append(f"{tr('life.effects.info.attr_modifiers', 'attr_modifiers')}: {attr_mods}")
 
             raw = detail.get("raw") if isinstance(detail.get("raw"), dict) else {}
             cap_lines: list[str] = []

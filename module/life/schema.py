@@ -374,6 +374,23 @@ def validate_event_trigger_record(
         elif not all(isinstance(m, str) for m in mutex):
             issues.append(ValidationIssue("error", "mutex 列表中的每个元素必须是字符串", source, record_id, "mutex"))
 
+    def _validate_item_condition(field: str) -> None:
+        value = record.get(field)
+        if value is None:
+            return
+        if isinstance(value, str):
+            if not value.strip():
+                issues.append(ValidationIssue("error", f"{field} 不能为空字符串", source, record_id, field))
+            return
+        if isinstance(value, list):
+            if not all(isinstance(item, str) and item.strip() for item in value):
+                issues.append(ValidationIssue("error", f"{field} 列表中的每个元素必须是非空字符串", source, record_id, field))
+            return
+        issues.append(ValidationIssue("error", f"{field} 必须是字符串或字符串列表", source, record_id, field))
+
+    _validate_item_condition("requires_item")
+    _validate_item_condition("requires_no_item")
+
     if "guaranteed" in record:
         _validate_guaranteed_block(record["guaranteed"], issues, source, record_id, "guaranteed")
 
@@ -384,6 +401,7 @@ def validate_event_trigger_record(
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
         "cooldown_s", "duration_s", "mutex", "guaranteed", "random_pools",
+        "requires_item", "requires_no_item",
         "_classes",
     }
     for key in record:

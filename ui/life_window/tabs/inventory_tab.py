@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QVBoxLayout,
 )
@@ -22,6 +23,20 @@ _OTHER_CLASS_ID = "__other__"
 
 class LifeInventoryTab(QFrame):
     tab_name = tr("life.tabs.inventory")
+    _CONTROL_HEIGHT = 28
+    _SEARCH_STYLE = (
+        "QLineEdit { background: #1f1f1f; color: #f0f0f0; border: 1px solid #3a3a3a; "
+        "border-radius: 7px; padding: 0 10px; min-height: 26px; max-height: 26px; }"
+        "QLineEdit:focus { border: 1px solid #5f8fc8; background: #252525; }"
+        "QToolTip { background-color: #111820; color: #b9d7ee; "
+        "border: 1px solid #2e4d6b; border-radius: 10px; padding: 8px 10px; }"
+    )
+    _FILTER_BTN_STYLE = (
+        "QPushButton { background: #2b2b2b; color: #d0d0d0; border: 1px solid #3d3d3d; "
+        "border-radius: 7px; padding: 0 10px; min-height: 26px; max-height: 26px; }"
+        "QPushButton:hover { background: #343434; }"
+        "QPushButton:checked { background: #1f5a9e; color: #ffffff; border: 1px solid #3f79c3; }"
+    )
 
     def __init__(
         self,
@@ -46,6 +61,8 @@ class LifeInventoryTab(QFrame):
         self._refresh_callback = refresh_callback
         self._rows: list[QFrame] = []
         self._active_class: str | None = None  # None = 全部
+        self._search_text: str = ""
+        self._usable_only: bool = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -54,6 +71,28 @@ class LifeInventoryTab(QFrame):
         # 子标签栏
         self._sub_tab_bar = PaginatedSubTabBar(on_switch=self._switch_class, parent=self)
         layout.addWidget(self._sub_tab_bar)
+
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(18, 0, 18, 0)
+        filter_row.setSpacing(8)
+
+        self._search_input = QLineEdit(self)
+        self._search_input.setPlaceholderText(tr("life.search.simple_placeholder"))
+        self._search_input.setToolTip(tr("life.search.advanced_tip"))
+        self._search_input.setStyleSheet(self._SEARCH_STYLE)
+        self._search_input.setFixedHeight(self._CONTROL_HEIGHT)
+        self._search_input.textChanged.connect(self._on_search_changed)
+        filter_row.addWidget(self._search_input, 1)
+
+        self._usable_only_btn = QPushButton(tr("life.inventory.filter.usable_only"), self)
+        self._usable_only_btn.setCheckable(True)
+        self._usable_only_btn.setStyleSheet(self._FILTER_BTN_STYLE)
+        self._usable_only_btn.setFixedHeight(self._CONTROL_HEIGHT)
+        self._usable_only_btn.setFixedWidth(96)
+        self._usable_only_btn.toggled.connect(self._on_usable_only_toggled)
+        filter_row.addWidget(self._usable_only_btn)
+
+        layout.addLayout(filter_row)
 
         inventory_card = create_section_card(tr("life.inventory.card.title"), tr("life.inventory.card.desc"))
         card_layout = inventory_card.layout()
@@ -108,10 +147,85 @@ class LifeInventoryTab(QFrame):
 
     def _get_filtered_items(self) -> list[dict]:
         if self._active_class is None:
-            return self._items
-        if self._active_class == _OTHER_CLASS_ID:
-            return [item for item in self._items if not item.get("classes", [])]
-        return [item for item in self._items if self._active_class in item.get("classes", [])]
+            base = self._items
+        elif self._active_class == _OTHER_CLASS_ID:
+            base = [item for item in self._items if not item.get("classes", [])]
+        else:
+            base = [item for item in self._items if self._active_class in item.get("classes", [])]
+
+        if self._usable_only:
+            base = [item for item in base if self._is_item_currently_usable(item)]
+
+        tokens = self._parse_search_tokens(self._search_text)
+        if not tokens:
+            return base
+
+        return [item for item in base if self._match_item_query_tokens(item, tokens)]
+
+    def _on_search_changed(self, text: str) -> None:
+        self._search_text = text or ""
+        self._rebuild_item_rows()
+
+    def _on_usable_only_toggled(self, checked: bool) -> None:
+        self._usable_only = bool(checked)
+        self._rebuild_item_rows()
+
+    @staticmethod
+    def _fuzzy_match(text: str, query: str) -> bool:
+        source = (text or "").strip().lower()
+        target = (query or "").strip().lower()
+        if not target:
+            return True
+        idx = 0
+        for ch in source:
+            if idx < len(target) and ch == target[idx]:
+                idx += 1
+                if idx == len(target):
+                    return True
+        return False
+
+    @staticmethod
+    def _parse_search_tokens(text: str) -> list[tuple[str, str]]:
+        tokens: list[tuple[str, str]] = []
+        for raw in (text or "").strip().split():
+            mode = "name"
+            body = raw
+            if raw.startswith("@"):
+                mode = "id"
+                body = raw[1:]
+            elif raw.startswith("#"):
+                mode = "detail"
+                body = raw[1:]
+
+            body = body.replace("_", " ").strip()
+            if not body:
+                continue
+            tokens.append((mode, body))
+        return tokens
+
+    def _match_item_query_tokens(self, item: dict, tokens: list[tuple[str, str]]) -> bool:
+        name = str(item.get("name", ""))
+        desc = str(item.get("desc", ""))
+        item_id = str(item.get("id", ""))
+
+        for mode, query in tokens:
+            if mode == "id":
+                if not self._fuzzy_match(item_id, query):
+                    return False
+            elif mode == "detail":
+                if not self._fuzzy_match(desc, query):
+                    return False
+            else:
+                if not self._fuzzy_match(name, query):
+                    return False
+        return True
+
+    def _is_item_currently_usable(self, item: dict) -> bool:
+        usable = bool(item.get("usable", True))
+        cooldown_remaining = float(item.get("cooldown_remaining", 0) or 0)
+        on_cooldown = bool(item.get("on_cooldown", False)) or cooldown_remaining > 0
+        count = int(item.get("count", 0) or 0)
+        return usable and not on_cooldown and count > 0
 
     def _rebuild_item_rows(self) -> None:
         self._clear_rows()
@@ -183,12 +297,14 @@ class LifeInventoryTab(QFrame):
 
         info_btn = QPushButton(tr("life.inventory.info"))
         info_btn.setFixedWidth(72)
+        info_btn.setFixedHeight(self._CONTROL_HEIGHT)
         info_btn.clicked.connect(lambda: self._show_item_info(str(item.get("id", ""))))
         row_layout.addWidget(info_btn)
 
         if on_cooldown:
             use_btn = QPushButton(tr("life.inventory.use_cooldown_btn"))
             use_btn.setFixedWidth(72)
+            use_btn.setFixedHeight(self._CONTROL_HEIGHT)
             use_btn.setStyleSheet(
                 "QPushButton { background-color: #4a4020; color: #b8a060; "
                 "border: 1px solid #6a5828; border-radius: 6px; }"
@@ -199,6 +315,7 @@ class LifeInventoryTab(QFrame):
             use_btn = QPushButton(tr("life.inventory.use"))
             use_btn.setObjectName("primaryButton")
             use_btn.setFixedWidth(72)
+            use_btn.setFixedHeight(self._CONTROL_HEIGHT)
         use_btn.setEnabled(bool(item.get("usable", True)))
         use_btn.clicked.connect(lambda: self._use_one_item(str(item.get("id", ""))))
         row_layout.addWidget(use_btn)

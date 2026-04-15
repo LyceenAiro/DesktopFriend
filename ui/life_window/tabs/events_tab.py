@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QLineEdit,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -22,11 +23,26 @@ _OTHER_CLASS_ID = "__other__"
 
 class LifeEventsTab(QFrame):
     tab_name = tr("life.tabs.events")
+    _CONTROL_HEIGHT = 28
+    _SEARCH_STYLE = (
+        "QLineEdit { background: #1f1f1f; color: #f0f0f0; border: 1px solid #3a3a3a; "
+        "border-radius: 7px; padding: 0 10px; min-height: 26px; max-height: 26px; }"
+        "QLineEdit:focus { border: 1px solid #5f8fc8; background: #252525; }"
+        "QToolTip { background-color: #111820; color: #b9d7ee; "
+        "border: 1px solid #2e4d6b; border-radius: 10px; padding: 8px 10px; }"
+    )
+    _FILTER_BTN_STYLE = (
+        "QPushButton { background: #2b2b2b; color: #d0d0d0; border: 1px solid #3d3d3d; "
+        "border-radius: 7px; padding: 0 10px; min-height: 26px; max-height: 26px; }"
+        "QPushButton:hover { background: #343434; }"
+        "QPushButton:checked { background: #1f5a9e; color: #ffffff; border: 1px solid #3f79c3; }"
+    )
 
     def __init__(
         self,
         fire_trigger: Callable[[str], dict[str, Any] | None],
         get_trigger_detail: Callable[[str], dict[str, Any] | None],
+        get_item_display_name: Callable[[str], str],
         get_trigger_cooldown_remaining: Callable[[str], float],
         get_trigger_executing_remaining: Callable[[str], float],
         can_fire_trigger: Callable[[str], tuple[bool, str]],
@@ -40,6 +56,7 @@ class LifeEventsTab(QFrame):
         self._developer_mode = False
         self._fire_trigger = fire_trigger
         self._get_trigger_detail = get_trigger_detail
+        self._get_item_display_name = get_item_display_name
         self._get_trigger_cooldown_remaining = get_trigger_cooldown_remaining
         self._get_trigger_executing_remaining = get_trigger_executing_remaining
         self._can_fire_trigger = can_fire_trigger
@@ -49,6 +66,8 @@ class LifeEventsTab(QFrame):
         self._rows: list[QFrame] = []
         self._result_rows: list[QFrame] = []
         self._active_class: str | None = None  # None = 全部
+        self._search_text: str = ""
+        self._triggerable_only: bool = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -57,6 +76,28 @@ class LifeEventsTab(QFrame):
         # 子标签栏
         self._sub_tab_bar = PaginatedSubTabBar(on_switch=self._switch_class, parent=self)
         layout.addWidget(self._sub_tab_bar)
+
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(18, 0, 18, 0)
+        filter_row.setSpacing(8)
+
+        self._search_input = QLineEdit(self)
+        self._search_input.setPlaceholderText(tr("life.search.simple_placeholder"))
+        self._search_input.setToolTip(tr("life.search.advanced_tip"))
+        self._search_input.setStyleSheet(self._SEARCH_STYLE)
+        self._search_input.setFixedHeight(self._CONTROL_HEIGHT)
+        self._search_input.textChanged.connect(self._on_search_changed)
+        filter_row.addWidget(self._search_input, 1)
+
+        self._triggerable_only_btn = QPushButton(tr("life.events.filter.triggerable_only"), self)
+        self._triggerable_only_btn.setCheckable(True)
+        self._triggerable_only_btn.setStyleSheet(self._FILTER_BTN_STYLE)
+        self._triggerable_only_btn.setFixedHeight(self._CONTROL_HEIGHT)
+        self._triggerable_only_btn.setFixedWidth(96)
+        self._triggerable_only_btn.toggled.connect(self._on_triggerable_only_toggled)
+        filter_row.addWidget(self._triggerable_only_btn)
+
+        layout.addLayout(filter_row)
 
         # 事件触发器卡片
         trigger_card = create_section_card(tr("life.events.card.title"), tr("life.events.card.desc"))
@@ -128,10 +169,78 @@ class LifeEventsTab(QFrame):
 
     def _get_filtered_triggers(self) -> list[dict[str, Any]]:
         if self._active_class is None:
-            return self._triggers
-        if self._active_class == _OTHER_CLASS_ID:
-            return [t for t in self._triggers if not t.get("classes")]
-        return [t for t in self._triggers if self._active_class in t.get("classes", [])]
+            base = self._triggers
+        elif self._active_class == _OTHER_CLASS_ID:
+            base = [t for t in self._triggers if not t.get("classes")]
+        else:
+            base = [t for t in self._triggers if self._active_class in t.get("classes", [])]
+
+        if self._triggerable_only:
+            base = [t for t in base if bool(t.get("can_fire", False))]
+
+        tokens = self._parse_search_tokens(self._search_text)
+        if not tokens:
+            return base
+
+        return [t for t in base if self._match_trigger_query_tokens(t, tokens)]
+
+    def _on_search_changed(self, text: str) -> None:
+        self._search_text = text or ""
+        self._rebuild_trigger_rows()
+
+    def _on_triggerable_only_toggled(self, checked: bool) -> None:
+        self._triggerable_only = bool(checked)
+        self._rebuild_trigger_rows()
+
+    @staticmethod
+    def _fuzzy_match(text: str, query: str) -> bool:
+        source = (text or "").strip().lower()
+        target = (query or "").strip().lower()
+        if not target:
+            return True
+        idx = 0
+        for ch in source:
+            if idx < len(target) and ch == target[idx]:
+                idx += 1
+                if idx == len(target):
+                    return True
+        return False
+
+    @staticmethod
+    def _parse_search_tokens(text: str) -> list[tuple[str, str]]:
+        tokens: list[tuple[str, str]] = []
+        for raw in (text or "").strip().split():
+            mode = "name"
+            body = raw
+            if raw.startswith("@"):
+                mode = "id"
+                body = raw[1:]
+            elif raw.startswith("#"):
+                mode = "detail"
+                body = raw[1:]
+
+            body = body.replace("_", " ").strip()
+            if not body:
+                continue
+            tokens.append((mode, body))
+        return tokens
+
+    def _match_trigger_query_tokens(self, trigger: dict[str, Any], tokens: list[tuple[str, str]]) -> bool:
+        name = str(trigger.get("name", "") or "")
+        desc = str(trigger.get("desc", "") or "")
+        trigger_id = str(trigger.get("id", "") or "")
+
+        for mode, query in tokens:
+            if mode == "id":
+                if not self._fuzzy_match(trigger_id, query):
+                    return False
+            elif mode == "detail":
+                if not self._fuzzy_match(desc, query):
+                    return False
+            else:
+                if not self._fuzzy_match(name, query):
+                    return False
+        return True
 
     # ── 触发器行 ────────────────────────────────────────
 
@@ -211,6 +320,7 @@ class LifeEventsTab(QFrame):
         # 详情按钮
         info_btn = QPushButton(tr("life.events.info"))
         info_btn.setFixedWidth(72)
+        info_btn.setFixedHeight(self._CONTROL_HEIGHT)
         info_btn.clicked.connect(lambda: self._show_trigger_info(str(trigger.get("id", ""))))
         row_layout.addWidget(info_btn)
 
@@ -221,18 +331,37 @@ class LifeEventsTab(QFrame):
             "QPushButton:hover { background-color: #5a4e28; }"
             "QPushButton:pressed { background-color: #3a3018; }"
         )
+        blocked_style = (
+            "QPushButton { background-color: #3a2020; color: #a06060; "
+            "border: 1px solid #6a3828; border-radius: 6px; }"
+            "QPushButton:hover { background-color: #4a2828; }"
+            "QPushButton:pressed { background-color: #2a1818; }"
+        )
+        can_fire = bool(trigger.get("can_fire", True))
+        block_reason = str(trigger.get("block_reason", ""))
+        item_blocked = not can_fire and (
+            block_reason.startswith("missing_item:") or block_reason.startswith("has_item:")
+        )
         if executing:
             fire_btn = QPushButton(tr("life.events.fire_executing_btn"))
             fire_btn.setFixedWidth(72)
+            fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
             fire_btn.setStyleSheet(busy_style)
         elif on_cooldown:
             fire_btn = QPushButton(tr("life.events.fire_cooldown_btn"))
             fire_btn.setFixedWidth(72)
+            fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
             fire_btn.setStyleSheet(busy_style)
+        elif item_blocked:
+            fire_btn = QPushButton(tr("life.events.fire_blocked_btn"))
+            fire_btn.setFixedWidth(72)
+            fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
+            fire_btn.setStyleSheet(blocked_style)
         else:
             fire_btn = QPushButton(tr("life.events.fire"))
             fire_btn.setObjectName("primaryButton")
             fire_btn.setFixedWidth(72)
+            fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
         fire_btn.clicked.connect(lambda: self._on_fire_trigger(str(trigger.get("id", ""))))
         row_layout.addWidget(fire_btn)
 
@@ -269,6 +398,14 @@ class LifeEventsTab(QFrame):
             if reason.startswith("mutex:"):
                 mutex_id = reason[6:]
                 self._feedback_callback(tr("life.events.fire_mutex_blocked", trigger=mutex_id), "warning")
+            elif reason.startswith("missing_item:"):
+                item_id = reason[13:]
+                item_name = self._get_item_display_name(item_id)
+                self._feedback_callback(tr("life.events.fire_missing_item", item=item_name), "warning")
+            elif reason.startswith("has_item:"):
+                item_id = reason[9:]
+                item_name = self._get_item_display_name(item_id)
+                self._feedback_callback(tr("life.events.fire_has_item", item=item_name), "warning")
             else:
                 self._feedback_callback(tr("life.events.fire_failed"), "error")
             return

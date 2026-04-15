@@ -18,20 +18,20 @@ def move_clear(self: DesktopPet):
 
 def move_left(self: DesktopPet):
     if self.move_count <= 0:
-        _log.INFO("移动自然停止")
+        _log.DEBUG("移动自然停止")
         move_clear(self)
     else:
         _walk.start_left()
 
 def move_right(self: DesktopPet):
     if self.move_count <= 0:
-        _log.INFO("移动自然停止")
+        _log.DEBUG("移动自然停止")
         move_clear(self)
     else:
         _walk.start_right()
 
 def move_jump(self: DesktopPet):
-    _log.INFO("跳跃")
+    _log.DEBUG("跳跃")
     if hasattr(self, 'jump_timer') and self.jump_timer:
         self.move_count = 0
         self.jump_timer.stop()
@@ -83,12 +83,12 @@ class move_event:
                 return
 
             if self.Pet.x() - 2 < 0:
-                _log.INFO("已经移动到最左侧了")
+                _log.DEBUG("已经移动到最左侧了")
                 self.Pet.move(0, self.Pet.y())
                 move_clear(self.Pet)
                 return
             
-            _log.INFO(f"正在向左移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}，距离原点：{self.Pet.origin_x}")
+            _log.DEBUG(f"正在向左移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}，距离原点：{self.Pet.origin_x}")
 
             if self.code == 1:
                 self.Pet.PetArt.setPixmap(PetArtList[WALK1])
@@ -112,12 +112,12 @@ class move_event:
                 return
 
             if self.Pet.x() + 2 >= self.Pet.screen_max_x - self.Pet.width():
-                _log.INFO("已经移动到最右侧了")
+                _log.DEBUG("已经移动到最右侧了")
                 self.Pet.move(self.Pet.screen_max_x - self.Pet.width(), self.Pet.y())
                 move_clear(self.Pet)
                 return
             
-            _log.INFO(f"正在向右移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}，距离原点：{self.Pet.origin_x}")
+            _log.DEBUG(f"正在向右移动，距离计数器：{self.Pet.move_count}，动画码：{self.code}，距离原点：{self.Pet.origin_x}")
 
             if self.code == 1:
                 self.Pet.PetArt.setPixmap(PetArtList[WALK1_R])
@@ -136,7 +136,7 @@ class move_event:
                 self.code = 0
 
     def stop(self):
-        _log.INFO("移动停止")
+        _log.DEBUG("移动停止")
         self.timer.stop()
         self.move_init()
 

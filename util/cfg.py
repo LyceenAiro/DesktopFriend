@@ -38,6 +38,8 @@ DEFAULT_CONFIGS = {
         "toast_duration_ms": 10000,
         "developer_mode": False,
         "locale": "zh_cn",
+        "log_level": "INFO",
+        "log_max_file_size_mb": 32,
     },
     "life": {
         "life_enabled": False,
@@ -49,7 +51,7 @@ def init_config_dir():
     """初始化配置文件夹，如果不存在则创建"""
     try:
         CONFIG_DIR.mkdir(exist_ok=True)
-        _log.INFO(f"配置文件夹初始化成功: {CONFIG_DIR.absolute()}")
+        _log.DEBUG(f"配置文件夹初始化成功: {CONFIG_DIR.absolute()}")
     except Exception as e:
         _log.ERROR(f"创建配置文件夹失败: {e}")
         raise
@@ -66,7 +68,7 @@ def _ensure_config_file(category: str):
         try:
             with open(config_file, "w", encoding="utf-8") as f:
                 json.dump(DEFAULT_CONFIGS[category], f, indent=2, ensure_ascii=False)
-            _log.INFO(f"创建默认配置文件: {config_file}")
+            _log.DEBUG(f"创建默认配置文件: {config_file}")
         except Exception as e:
             _log.ERROR(f"创建配置文件失败 {config_file}: {e}")
             raise
@@ -97,7 +99,7 @@ def load_config(category: str) -> dict:
                 config = {}
             merged = dict(DEFAULT_CONFIGS.get(category, {}))
             merged.update(config)
-            _log.INFO(f"加载配置成功: {config_file}")
+            _log.DEBUG(f"加载配置成功: {config_file}")
             return merged
     except Exception as e:
         _log.ERROR(f"读取配置文件失败 {config_file}: {e}，使用默认配置")
@@ -122,7 +124,9 @@ def save_config(category: str, config: dict):
     try:
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
-        _log.INFO(f"保存配置成功: {config_file}")
+        _log.DEBUG(f"保存配置成功: {config_file}")
+        if category == "debug":
+            _log.reload_from_debug_config(str(config_file))
     except Exception as e:
         _log.ERROR(f"保存配置文件失败 {config_file}: {e}")
         raise

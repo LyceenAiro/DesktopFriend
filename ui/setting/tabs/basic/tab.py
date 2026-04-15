@@ -192,7 +192,7 @@ class BasicSettingsTab(QFrame):
         save_config("basic", config)
         self._basic_config = config
 
-        _log.INFO(
+        _log.DEBUG(
             f"基础设置已保存: 移动动作间隔={PetWindow.move_timer}ms, "
             f"待机动态间隔={PetWindow.default_action_interval}ms, "
             f"置顶={self.stay_top_check.isChecked()}, 待机动作={PetWindow.default_action}, "

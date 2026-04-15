@@ -34,6 +34,7 @@ class LifeEffect:
     remaining_ticks: int
     stack_rule: str = "add"
     cap_modifiers: list[tuple[str, str, Any]] = field(default_factory=list)
+    attr_modifiers: dict[str, float] = field(default_factory=dict)
     managed: bool = False  # 由外部（如营养系统）管理生命周期，不倒计时也不自动移除
     nutrition_per_tick: dict[str, float] = field(default_factory=dict)  # 每 tick 额外消耗的营养值（正值=减少）
 
@@ -47,7 +48,6 @@ class LifeProfile:
     attrs: dict[str, float] = field(default_factory=dict)
     inventory: dict[str, int] = field(default_factory=dict)
     active_effects: list[LifeEffect] = field(default_factory=list)
-
 
 class LifeSystem:
     """0.3 draft implementation for life architecture.
@@ -153,9 +153,11 @@ class LifeSystem:
 
     def _load_starter_inventory(self) -> dict[str, int]:
         result: dict[str, int] = {}
+        loaded_files = 0
         for item_root in self._iter_item_dirs():
             for starter_file in sorted(item_root.rglob("starter_inventory.json")):
                 try:
+                    loaded_files += 1
                     raw = json.loads(starter_file.read_text(encoding="utf-8"))
                     if not isinstance(raw, dict):
                         continue
@@ -167,10 +169,12 @@ class LifeSystem:
                         if c > 0 and str(item_id) in self.item_registry:
                             result[str(item_id)] = result.get(str(item_id), 0) + c
                 except Exception as exc:
-                    _log.WARNING(f"[Life] Failed to load starter_inventory.json from {starter_file}: {exc}")
+                    _log.WARN(f"[Life] Failed to load starter_inventory.json from {starter_file}: {exc}")
+        _log.DEBUG(f"[Life][Register][StarterInventory] files={loaded_files} loaded_items={len(result)}")
         return result
 
     def reload_registries(self) -> None:
+        _log.INFO("[Life][Register]开始重载注册表")
         next_state_defs = self._load_state_definitions()
         next_nutrition_defs = self._load_nutrition_definitions()
         self._sync_profile_states(next_state_defs)
@@ -199,6 +203,8 @@ class LifeSystem:
         self.attribute_rules = self._load_attribute_rules(self.buff_registry)
         self._refresh_attr_range_effects()
         self._sync_managed_nutrition_buffs()
+        self._sync_managed_state_buffs()
+        self._refresh_attr_range_effects()
         self._report_validation_issues()
         _log.INFO(
             "[Life]注册完成 "
@@ -309,10 +315,14 @@ class LifeSystem:
 
     def _load_state_definitions(self) -> dict[str, dict[str, Any]]:
         loaded: list[dict[str, Any]] = []
+        scanned_dirs = 0
+        scanned_files = 0
         for directory in self._iter_status_dirs():
             if not directory.exists():
                 continue
+            scanned_dirs += 1
             for file_path in sorted(directory.rglob("*.json")):
+                scanned_files += 1
                 payload = self._read_json(file_path)
                 if isinstance(payload, dict) and "id" in payload:
                     loaded.append(payload)
@@ -320,6 +330,10 @@ class LifeSystem:
                     loaded.extend([r for r in payload if isinstance(r, dict)])
 
         if not loaded:
+            _log.WARN(
+                f"[Life][Register][Status]未发现状态定义，使用默认状态。"
+                f"dirs={scanned_dirs} files={scanned_files} default={len(BASE_STATES)}"
+            )
             return self._build_default_state_definitions()
 
         normalized: list[dict[str, Any]] = []
@@ -342,6 +356,27 @@ class LifeSystem:
             except Exception:
                 order = index
 
+            effects_payload = record.get("effects", [])
+            effects: list[dict[str, Any]] = []
+            if isinstance(effects_payload, list):
+                for effect in effects_payload:
+                    if not isinstance(effect, dict):
+                        continue
+                    states = effect.get("states", {})
+                    attrs = effect.get("attrs", {})
+                    buff_id = effect.get("buff_id")
+                    entry: dict[str, Any] = {
+                        "min": self._to_float_safe(effect.get("min", float("-inf")), float("-inf")),
+                        "max": self._to_float_safe(effect.get("max", float("inf")), float("inf")),
+                        "percent_min": self._to_float_safe(effect.get("percent_min", float("-inf")), float("-inf")),
+                        "percent_max": self._to_float_safe(effect.get("percent_max", float("inf")), float("inf")),
+                        "states": dict(states) if isinstance(states, dict) else {},
+                        "attrs": dict(attrs) if isinstance(attrs, dict) else {},
+                    }
+                    if buff_id is not None:
+                        entry["buff_id"] = str(buff_id)
+                    effects.append(entry)
+
             normalized.append(
                 {
                     "id": state_id,
@@ -351,6 +386,7 @@ class LifeSystem:
                     "min": min_value,
                     "max": max_value,
                     "order": order,
+                    "effects": effects,
                 }
             )
 
@@ -359,16 +395,29 @@ class LifeSystem:
 
         normalized.sort(key=lambda item: (int(item.get("order", 0)), str(item.get("id", ""))))
         result: dict[str, dict[str, Any]] = {}
+        duplicate_count = 0
         for item in normalized:
-            result[str(item["id"])] = item
+            state_id = str(item["id"])
+            if state_id in result:
+                duplicate_count += 1
+                _log.WARN(f"[Life][Register][Status]重复状态ID，后者覆盖前者: {state_id}")
+            result[state_id] = item
+        _log.INFO(
+            f"[Life][Register][Status]dirs={scanned_dirs} files={scanned_files} "
+            f"records={len(result)} duplicates={duplicate_count}"
+        )
         return result
 
     def _load_nutrition_definitions(self) -> dict[str, dict[str, Any]]:
         loaded: list[dict[str, Any]] = []
+        scanned_dirs = 0
+        scanned_files = 0
         for directory in self._iter_nutrition_dirs():
             if not directory.exists():
                 continue
+            scanned_dirs += 1
             for file_path in sorted(directory.rglob("*.json")):
+                scanned_files += 1
                 payload = self._read_json(file_path)
                 if isinstance(payload, dict) and "id" in payload:
                     loaded.append(payload)
@@ -408,6 +457,8 @@ class LifeSystem:
                     entry: dict[str, Any] = {
                         "min": self._to_float_safe(effect.get("min", float("-inf")), float("-inf")),
                         "max": self._to_float_safe(effect.get("max", float("inf")), float("inf")),
+                        "percent_min": self._to_float_safe(effect.get("percent_min", float("-inf")), float("-inf")),
+                        "percent_max": self._to_float_safe(effect.get("percent_max", float("inf")), float("inf")),
                         "states": dict(states) if isinstance(states, dict) else {},
                         "attrs": dict(attrs) if isinstance(attrs, dict) else {},
                     }
@@ -431,8 +482,17 @@ class LifeSystem:
 
         normalized.sort(key=lambda item: (int(item.get("order", 0)), str(item.get("id", ""))))
         result: dict[str, dict[str, Any]] = {}
+        duplicate_count = 0
         for item in normalized:
-            result[str(item["id"])] = item
+            nutrition_id = str(item["id"])
+            if nutrition_id in result:
+                duplicate_count += 1
+                _log.WARN(f"[Life][Register][Nutrition]重复营养ID，后者覆盖前者: {nutrition_id}")
+            result[nutrition_id] = item
+        _log.INFO(
+            f"[Life][Register][Nutrition]dirs={scanned_dirs} files={scanned_files} "
+            f"records={len(result)} duplicates={duplicate_count}"
+        )
         return result
 
     def _sync_profile_states(self, next_state_defs: dict[str, dict[str, Any]]) -> None:
@@ -480,7 +540,7 @@ class LifeSystem:
 
     def _report_validation_issues(self) -> None:
         if not self.validation_issues:
-            _log.INFO("[Life]schema校验通过")
+            _log.DEBUG("[Life]schema校验通过")
             return
 
         error_count = 0
@@ -497,7 +557,7 @@ class LifeSystem:
                 warn_count += 1
                 _log.WARN(text)
 
-        _log.INFO(f"[Life]schema校验完成 error={error_count} warn={warn_count}")
+        _log.DEBUG(f"[Life]schema校验完成 error={error_count} warn={warn_count}")
 
     def _load_attribute_rules(self, buff_registry: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         rules: dict[str, list[dict[str, Any]]] = {}
@@ -540,13 +600,18 @@ class LifeSystem:
     ) -> tuple[dict[str, dict[str, Any]], list[ValidationIssue]]:
         result: dict[str, dict[str, Any]] = {}
         issues: list[ValidationIssue] = []
+        scanned_dirs = 0
+        scanned_files = 0
+        duplicate_count = 0
         for directory in directories:
             if not directory.exists():
                 continue
+            scanned_dirs += 1
 
             for file_path in sorted(directory.rglob("*.json")):
                 if file_path.name == "class.json":
                     continue
+                scanned_files += 1
                 payload = self._read_json(file_path)
                 if not payload:
                     continue
@@ -575,8 +640,15 @@ class LifeSystem:
                         issues.extend(validate_buff_record(record, str(file_path), state_keys=state_keys, attr_keys=attr_keys, nutrition_keys=nutrition_keys))
                         if classes:
                             record["_classes"] = classes
+                    if record_id in result:
+                        duplicate_count += 1
+                        _log.WARN(f"[Life][Register][{kind}]重复ID，后者覆盖前者: {record_id} file={file_path}")
                     result[record_id] = record
 
+        _log.INFO(
+            f"[Life][Register][{kind}]dirs={scanned_dirs} files={scanned_files} "
+            f"records={len(result)} issues={len(issues)} duplicates={duplicate_count}"
+        )
         return result, issues
 
     def _resolve_buff_classes(self, file_path: Path, root: Path) -> list[str]:
@@ -640,13 +712,18 @@ class LifeSystem:
     ) -> tuple[dict[str, dict[str, Any]], list[ValidationIssue]]:
         registry: dict[str, dict[str, Any]] = {}
         issues: list[ValidationIssue] = []
+        scanned_dirs = 0
+        scanned_files = 0
+        duplicate_count = 0
         for root in roots:
             if not root.exists():
                 continue
+            scanned_dirs += 1
 
             for file_path in sorted(root.rglob("*.json")):
                 if file_path.name in ("starter_inventory.json", "class.json"):
                     continue
+                scanned_files += 1
                 payload = self._read_json(file_path)
                 # 查找最近的 class.json 以确定分类
                 classes = self._resolve_item_classes(file_path, root)
@@ -665,6 +742,9 @@ class LifeSystem:
                             nutrition_keys=nutrition_keys,
                         )
                     )
+                    if item_id in registry:
+                        duplicate_count += 1
+                        _log.WARN(f"[Life][Register][item]重复ID，后者覆盖前者: {item_id} file={file_path}")
                     registry[item_id] = payload
                 elif isinstance(payload, list):
                     category = file_path.parent.name
@@ -683,8 +763,15 @@ class LifeSystem:
                                     nutrition_keys=nutrition_keys,
                                 )
                             )
+                            if item_id in registry:
+                                duplicate_count += 1
+                                _log.WARN(f"[Life][Register][item]重复ID，后者覆盖前者: {item_id} file={file_path}")
                             registry[item_id] = item
 
+        _log.INFO(
+            f"[Life][Register][item]dirs={scanned_dirs} files={scanned_files} "
+            f"records={len(registry)} issues={len(issues)} duplicates={duplicate_count}"
+        )
         return registry, issues
 
     def _resolve_item_classes(self, file_path: Path, root: Path) -> list[str]:
@@ -748,13 +835,18 @@ class LifeSystem:
     ) -> tuple[dict[str, dict[str, Any]], list[ValidationIssue]]:
         registry: dict[str, dict[str, Any]] = {}
         issues: list[ValidationIssue] = []
+        scanned_dirs = 0
+        scanned_files = 0
+        duplicate_count = 0
         validate_fn = validate_event_trigger_record if kind == "event_trigger" else validate_event_outcome_record
         for directory in directories:
             if not directory.exists():
                 continue
+            scanned_dirs += 1
             for file_path in sorted(directory.rglob("*.json")):
                 if file_path.name == "class.json":
                     continue
+                scanned_files += 1
                 payload = self._read_json(file_path)
                 if not payload:
                     continue
@@ -779,7 +871,14 @@ class LifeSystem:
                     if classes:
                         record["_classes"] = classes
                     issues.extend(validate_fn(record, str(file_path)))
+                    if record_id in registry:
+                        duplicate_count += 1
+                        _log.WARN(f"[Life][Register][{kind}]重复ID，后者覆盖前者: {record_id} file={file_path}")
                     registry[record_id] = record
+        _log.INFO(
+            f"[Life][Register][{kind}]dirs={scanned_dirs} files={scanned_files} "
+            f"records={len(registry)} issues={len(issues)} duplicates={duplicate_count}"
+        )
         return registry, issues
 
     def _resolve_event_classes(self, file_path: Path, root: Path) -> list[str]:
@@ -970,6 +1069,12 @@ class LifeSystem:
         payload["desc"] = self._resolve_record_desc(payload)
         return payload
 
+    def get_item_display_name(self, item_id: str) -> str:
+        item = self.item_registry.get(item_id)
+        if not item:
+            return str(item_id)
+        return self._resolve_record_name(item, str(item_id))
+
     def get_item_effect_summary(self, item_id: str) -> dict[str, Any] | None:
         item = self.item_registry.get(item_id)
         if not item:
@@ -1069,7 +1174,13 @@ class LifeSystem:
 
     def clear_effect(self, effect_id: str) -> bool:
         before = len(self.profile.active_effects)
-        self.profile.active_effects = [e for e in self.profile.active_effects if e.effect_id != effect_id]
+        keep: list[LifeEffect] = []
+        for effect in self.profile.active_effects:
+            if effect.effect_id == effect_id:
+                self._revert_effect_attr_modifiers(effect)
+                continue
+            keep.append(effect)
+        self.profile.active_effects = keep
         return len(self.profile.active_effects) < before
 
     def _apply_record(self, record: dict[str, Any], source: str, duration_override: int | None = None) -> None:
@@ -1160,7 +1271,7 @@ class LifeSystem:
 
         self._refresh_attr_range_effects()
 
-        _log.INFO(f"[Life]应用{source}: {record_id}")
+        _log.DEBUG(f"[Life]应用{source}: {record_id}")
 
     def _extract_cap_modifiers(self, record: dict[str, Any]) -> list[tuple[str, str, Any]]:
         modifiers: list[tuple[str, str, Any]] = []
@@ -1243,10 +1354,14 @@ class LifeSystem:
                 effect.remaining_ticks -= 1
                 if effect.remaining_ticks > 0:
                     next_effects.append(effect)
+                else:
+                    self._revert_effect_attr_modifiers(effect)
 
         self.profile.active_effects = next_effects
         self._tick_nutrition()
         self.tick_triggers()
+        self._sync_managed_nutrition_buffs()
+        self._sync_managed_state_buffs()
         self._refresh_attr_range_effects()
 
     def _refresh_attr_range_effects(self) -> None:
@@ -1514,8 +1629,6 @@ class LifeSystem:
             if decay > 0:
                 self._change_nutrition(nutrition_key, -decay)
 
-        self._sync_managed_nutrition_buffs()
-
     def _sync_managed_nutrition_buffs(self) -> None:
         """根据当前营养值同步 managed buff 的激活/移除状态。
         在 tick 时和 reload_registries 后均需调用，确保初始状态正确。
@@ -1525,12 +1638,11 @@ class LifeSystem:
 
         for nutrition_key, definition in self.nutrition_definitions.items():
             current = float(self.profile.nutrition.get(nutrition_key, definition.get("default", 0.0)))
+            base_max = float(definition.get("max", 100.0))
             source_tag = f"nutrition:{nutrition_key}"
 
             for effect_def in definition.get("effects", []):
-                min_v = float(effect_def.get("min", float("-inf")))
-                max_v = float(effect_def.get("max", float("inf")))
-                in_range = min_v <= current < max_v
+                in_range = self._threshold_effect_in_range(effect_def, current, base_max)
                 buff_id = effect_def.get("buff_id")
 
                 if buff_id:
@@ -1545,9 +1657,64 @@ class LifeSystem:
                         if buff_record:
                             self._apply_managed_buff(buff_record, source=source_tag)
                     elif not in_range and existing is not None:
+                        self._revert_effect_attr_modifiers(existing)
                         self.profile.active_effects.remove(existing)
                 else:
                     # 旧方式（向下兼容）：直接每 tick 改变状态值
+                    if not self._threshold_effect_in_range(effect_def, current, float(definition.get("max", 100.0))):
+                        continue
+                    for state, delta in dict(effect_def.get("states", {})).items():
+                        self._change_state(str(state), float(delta))
+                    for attr, delta in dict(effect_def.get("attrs", {})).items():
+                        if attr not in self.profile.attrs:
+                            continue
+                        self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) + float(delta)
+
+    def _threshold_effect_in_range(self, effect_def: dict[str, Any], current: float, base_max: float) -> bool:
+        percent_min = float(effect_def.get("percent_min", float("-inf")))
+        percent_max = float(effect_def.get("percent_max", float("inf")))
+        if percent_min != float("-inf") or percent_max != float("inf"):
+            safe_base = base_max if base_max > 0 else 1.0
+            percent_value = (current / safe_base) * 100.0
+            return percent_min <= percent_value < percent_max
+
+        min_v = float(effect_def.get("min", float("-inf")))
+        max_v = float(effect_def.get("max", float("inf")))
+        return min_v <= current < max_v
+
+    def _sync_managed_state_buffs(self) -> None:
+        if not self.state_definitions:
+            return
+
+        for state_key, definition in self.state_definitions.items():
+            current = float(self.profile.states.get(state_key, definition.get("default", 0.0)))
+            base_max = float(definition.get("max", GLOBAL_VALUE_MAX))
+            source_tag = f"state:{state_key}"
+
+            for effect_def in definition.get("effects", []):
+                if not isinstance(effect_def, dict):
+                    continue
+
+                in_range = self._threshold_effect_in_range(effect_def, current, base_max)
+                buff_id = effect_def.get("buff_id")
+
+                if buff_id:
+                    existing = next(
+                        (
+                            e
+                            for e in self.profile.active_effects
+                            if e.effect_id == buff_id and e.source == source_tag
+                        ),
+                        None,
+                    )
+                    if in_range and existing is None:
+                        buff_record = self.buff_registry.get(str(buff_id))
+                        if buff_record:
+                            self._apply_managed_buff(buff_record, source=source_tag)
+                    elif not in_range and existing is not None:
+                        self._revert_effect_attr_modifiers(existing)
+                        self.profile.active_effects.remove(existing)
+                else:
                     if not in_range:
                         continue
                     for state, delta in dict(effect_def.get("states", {})).items():
@@ -1572,6 +1739,13 @@ class LifeSystem:
                 per_tick[state] = float(record[value_key])
 
         cap_modifiers = self._extract_cap_modifiers(record)
+        attr_modifiers: dict[str, float] = {}
+        for attr in BASE_ATTRS:
+            if attr in record:
+                attr_modifiers[attr] = float(record[attr])
+
+        for attr, delta in attr_modifiers.items():
+            self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) + delta
 
         nutrition_per_tick: dict[str, float] = {}
         for n_key in self.nutrition_keys:
@@ -1591,11 +1765,21 @@ class LifeSystem:
             remaining_ticks=0,
             stack_rule="refresh",
             cap_modifiers=cap_modifiers,
+            attr_modifiers=attr_modifiers,
             managed=True,
             nutrition_per_tick=nutrition_per_tick,
         )
         self.profile.active_effects.append(effect)
-        _log.INFO(f"[Life]激活持续Buff: {record_id} (来源: {source})")
+        attr_info = f" attrs={effect.attr_modifiers}" if effect.attr_modifiers else ""
+        _log.DEBUG(f"[Life]激活持续Buff: {record_id} (来源: {source}){attr_info}")
+
+    def _revert_effect_attr_modifiers(self, effect: LifeEffect) -> None:
+        if not effect.attr_modifiers:
+            return
+        for attr, delta in effect.attr_modifiers.items():
+            if attr not in self.profile.attrs:
+                continue
+            self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) - float(delta)
 
     def _change_nutrition(self, nutrition_key: str, delta: float) -> None:
         if nutrition_key not in self.profile.nutrition:
@@ -1630,6 +1814,31 @@ class LifeSystem:
             )
         return snapshot
 
+    def get_attr_snapshot(self) -> list[dict[str, Any]]:
+        """返回每个属性的值分解快照：基础值、永久修正、效果修正。"""
+        # 从所有激活效果中汇总属性修正量（这部分在效果结束时会被撤销）
+        effect_deltas: dict[str, float] = {k: 0.0 for k in BASE_ATTRS}
+        for effect in self.profile.active_effects:
+            for attr, delta in effect.attr_modifiers.items():
+                if attr in effect_deltas:
+                    effect_deltas[attr] += float(delta)
+
+        result: list[dict[str, Any]] = []
+        for attr in BASE_ATTRS:
+            base = 10.0
+            current = float(self.profile.attrs.get(attr, 0.0))
+            effect_delta = effect_deltas.get(attr, 0.0)
+            permanent_delta = current - base - effect_delta
+            result.append({
+                "id": attr,
+                "name": tr(f"life.attr.{attr}", default=attr),
+                "value": current,
+                "base": base,
+                "permanent_delta": permanent_delta,
+                "effect_delta": effect_delta,
+            })
+        return result
+
     # ── Event system ────────────────────────────────────────────────
 
     def get_trigger_cooldown_remaining(self, trigger_id: str) -> float:
@@ -1662,6 +1871,26 @@ class LifeSystem:
                     continue
                 if self.get_trigger_cooldown_remaining(other_id) > 0:
                     return False, f"mutex:{other_id}"
+        # 必须拥有该物品
+        requires_item = trigger.get("requires_item")
+        if requires_item is not None:
+            check_ids = [requires_item] if isinstance(requires_item, str) else list(requires_item)
+            for item_id in check_ids:
+                item_id = str(item_id).strip()
+                if not item_id:
+                    continue
+                if self.profile.inventory.get(item_id, 0) < 1:
+                    return False, f"missing_item:{item_id}"
+        # 必须没有该物品
+        requires_no_item = trigger.get("requires_no_item")
+        if requires_no_item is not None:
+            check_ids = [requires_no_item] if isinstance(requires_no_item, str) else list(requires_no_item)
+            for item_id in check_ids:
+                item_id = str(item_id).strip()
+                if not item_id:
+                    continue
+                if self.profile.inventory.get(item_id, 0) >= 1:
+                    return False, f"has_item:{item_id}"
         return True, ""
 
     def get_trigger_executing_remaining(self, trigger_id: str) -> float:
@@ -1693,7 +1922,7 @@ class LifeSystem:
                 if dur > 0:
                     self._trigger_executing[trigger_id] = time.time() + dur
                     has_duration = True
-                    _log.INFO(f"[Life][Event]开始执行: {trigger_id} 耗时={dur}s")
+                    _log.DEBUG(f"[Life][Event]开始执行: {trigger_id} 耗时={dur}s")
             except Exception:
                 pass
 
@@ -1732,7 +1961,7 @@ class LifeSystem:
         self._execute_event_guaranteed(trigger, result_log)
         self._execute_event_random_pools(trigger, result_log)
 
-        _log.INFO(f"[Life][Event]完成触发: {trigger_id} 结果数={len(result_log)}")
+        _log.DEBUG(f"[Life][Event]完成触发: {trigger_id} 结果数={len(result_log)}")
         return {
             "trigger_id": trigger_id,
             "trigger_name": trigger_name,
@@ -1972,9 +2201,11 @@ class LifeSystem:
                     "effect_desc": e.effect_desc,
                     "source": e.source,
                     "per_tick": e.per_tick,
+                    "nutrition_per_tick": e.nutrition_per_tick,
                     "remaining_ticks": e.remaining_ticks,
                     "stack_rule": e.stack_rule,
                     "cap_modifiers": e.cap_modifiers,
+                    "attr_modifiers": e.attr_modifiers,
                 }
                 for e in self.profile.active_effects
             ],
@@ -2012,6 +2243,7 @@ class LifeSystem:
                     effect_desc=str(raw.get("effect_desc", "")),
                     source=str(raw.get("source", "")),
                     per_tick={k: float(v) for k, v in dict(raw.get("per_tick", {})).items()},
+                    nutrition_per_tick={k: float(v) for k, v in dict(raw.get("nutrition_per_tick", {})).items()},
                     remaining_ticks=int(raw.get("remaining_ticks", 0)),
                     stack_rule=str(raw.get("stack_rule", "add")),
                     cap_modifiers=[
@@ -2019,6 +2251,7 @@ class LifeSystem:
                         for entry in list(raw.get("cap_modifiers", []))
                         if isinstance(entry, (list, tuple)) and len(entry) == 3
                     ],
+                    attr_modifiers={k: float(v) for k, v in dict(raw.get("attr_modifiers", {})).items()},
                 )
             )
 

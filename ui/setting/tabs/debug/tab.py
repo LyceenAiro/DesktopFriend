@@ -1,7 +1,7 @@
 from typing import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout
+from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout
 
 from ui.setting.common import create_section_card
 from ui.setting.constants import INPUT_WIDTH, LABEL_WIDTH
@@ -29,6 +29,10 @@ class DebugTab(QFrame):
         parent=None,
     ):
         super().__init__(parent)
+        debug_config = load_config("debug")
+        initial_log_level = str(debug_config.get("log_level", "INFO")).strip().upper()
+        initial_log_size_mb = int(debug_config.get("log_max_file_size_mb", 32) or 32)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(*TAB_MARGINS)
         layout.setSpacing(TAB_SPACING)
@@ -73,6 +77,43 @@ class DebugTab(QFrame):
         duration_row.addWidget(self.toast_duration_spin)
         duration_row.addStretch()
         toast_layout.addLayout(duration_row)
+
+        level_row = QHBoxLayout()
+        level_row.setSpacing(ROW_SPACING)
+        level_label = QLabel(tr("settings.debug.log_level"))
+        level_label.setObjectName("fieldLabel")
+        level_label.setFixedWidth(LABEL_WIDTH)
+        level_row.addWidget(level_label)
+        self.log_level_combo = QComboBox()
+        self.log_level_combo.setFixedWidth(INPUT_WIDTH)
+        self.log_level_combo.addItem(tr("settings.debug.log_level.debug"), "DEBUG")
+        self.log_level_combo.addItem(tr("settings.debug.log_level.info"), "INFO")
+        self.log_level_combo.addItem(tr("settings.debug.log_level.warn"), "WARN")
+        self.log_level_combo.addItem(tr("settings.debug.log_level.error"), "ERROR")
+        level_index = self.log_level_combo.findData(initial_log_level)
+        if level_index < 0:
+            level_index = self.log_level_combo.findData("INFO")
+        if level_index >= 0:
+            self.log_level_combo.setCurrentIndex(level_index)
+        level_row.addWidget(self.log_level_combo)
+        level_row.addStretch()
+        toast_layout.addLayout(level_row)
+
+        size_row = QHBoxLayout()
+        size_row.setSpacing(ROW_SPACING)
+        size_label = QLabel(tr("settings.debug.log_max_size"))
+        size_label.setObjectName("fieldLabel")
+        size_label.setFixedWidth(LABEL_WIDTH)
+        size_row.addWidget(size_label)
+        self.log_size_spin = QSpinBox()
+        self.log_size_spin.setRange(1, 1024)
+        self.log_size_spin.setValue(max(1, initial_log_size_mb))
+        self.log_size_spin.setSuffix(" MB")
+        self.log_size_spin.setFixedWidth(INPUT_WIDTH)
+        self.log_size_spin.setAlignment(Qt.AlignRight)
+        size_row.addWidget(self.log_size_spin)
+        size_row.addStretch()
+        toast_layout.addLayout(size_row)
 
         preview_row = QHBoxLayout()
         preview_row.setSpacing(PREVIEW_ROW_SPACING)
@@ -184,4 +225,7 @@ class DebugTab(QFrame):
         toast_duration_ms = self.toast_duration_spin.value() * 1000
         config = load_config("debug")
         config["toast_duration_ms"] = toast_duration_ms
+        config["log_level"] = str(self.log_level_combo.currentData() or "INFO").upper()
+        config["log_max_file_size_mb"] = max(1, int(self.log_size_spin.value()))
         save_config("debug", config)
+        return tr("settings.debug.saved")

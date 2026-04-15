@@ -3,9 +3,9 @@
 本文档用于第三方开发者编写 LIFE 模组，目标是做到“新增文件即可注册”。
 
 当前能力核对（与现有代码一致）：
-- 已接入：`status/`、`buff/`、`item/`、`lang/`、`event_trigger/`、`event_outcome/`（由内置加载流程自动处理）。
-- 可接入：`nutrition/`（需要在注册表上显式调用 `register_life_nutrition_hook()`）。
-- 事务回滚：失败时会回滚 `status/buff/item/lang/event_trigger/event_outcome` 与已注册 hook 资源。
+- 已接入：`status/`、`buff/`、`item/`、`nutrition/`、`lang/`、`event_trigger/`、`event_outcome/`（由内置加载流程自动处理）。
+- 可扩展：自定义资源可通过 `register_resource_hook()` 挂入同一事务。
+- 事务回滚：失败时会回滚 `status/buff/item/nutrition/lang/event_trigger/event_outcome` 与已注册 hook 资源。
 
 ## 1. 目录结构
 推荐的 mod 包结构：
@@ -45,9 +45,9 @@ mod/{your_mod}/
    └─ *.json
 ```
 
-当前 0.3 版本核心对 mod 目录的自动接入范围是 `status` / `buff` / `item` / `lang` / `event_trigger` / `event_outcome`。
+当前 0.3 版本核心对 mod 目录的自动接入范围是 `status` / `buff` / `item` / `nutrition` / `lang` / `event_trigger` / `event_outcome`。
 其中 `lang` 目录约定为 `mod/{your_mod}/lang/xx_xx.json`，会在加载时自动接入翻译系统并在回滚时移除。
-`nutrition/` 走资源钩子扩展：需先调用 `register_life_nutrition_hook()` 才会纳入同一事务流程。
+`register_life_nutrition_hook()` 仍可用，但主要用于旧版本兼容或自定义钩子行为；默认内置加载器已经自动处理 `nutrition/`。
 
 ## 2. pack_info.json 约定
 最小字段：
@@ -77,6 +77,18 @@ mod/{your_mod}/
 - `max` 上限
 - `order` 排序（数字越小越靠前）
 
+可选区间效果（与 nutrition 同风格）：
+- `effects`: 区间效果列表
+- 每条可包含：
+  - `min` / `max`: 数值区间（左闭右开）
+  - `percent_min` / `percent_max`: 百分比区间（左闭右开）
+  - `buff_id`: 命中区间时激活的持续 buff（离开区间自动移除）
+  - `states` / `attrs`: 命中区间时每 tick 直接改动（旧式兼容）
+
+百分比区间的计算方式：
+- `当前状态值 / 该状态基础上限(max) * 100`
+- 例如基础上限 1000，当前值 150，则百分比为 15%。
+
 示例：
 
 ```json
@@ -87,7 +99,14 @@ mod/{your_mod}/
   "default": 80,
   "min": 0,
   "max": 120,
-  "order": 50
+  "order": 50,
+  "effects": [
+    {
+      "percent_min": 10,
+      "percent_max": 20,
+      "buff_id": "exhausted"
+    }
+  ]
 }
 ```
 
@@ -175,8 +194,13 @@ i18 说明：
 
 `effects` 的单条规则结构：
 - `min` / `max`: 命中区间，采用左闭右开
+- `percent_min` / `percent_max`: 百分比区间，采用左闭右开
 - `states`: 命中时每 tick 对状态追加的变化
 - `attrs`: 命中时每 tick 对属性追加的变化
+- `buff_id`: 命中时激活持续 buff，离开区间自动移除
+
+百分比区间计算：
+- `当前营养值 / 该营养基础上限(max) * 100`
 
 示例：
 
@@ -191,19 +215,14 @@ i18 说明：
   "decay": 2,
   "effects": [
     {
-      "min": 60,
-      "max": 101,
-      "states": {
-        "energy": 0.5
-      }
+      "percent_min": 60,
+      "percent_max": 101,
+      "buff_id": "well_fed"
     },
     {
-      "min": 0,
-      "max": 25,
-      "states": {
-        "energy": -1,
-        "hp": -0.5
-      }
+      "percent_min": 0,
+      "percent_max": 25,
+      "buff_id": "starving"
     }
   ]
 }
@@ -251,6 +270,8 @@ i18 说明：
 - `cooldown_s`: 触发后冷却秒数
 - `duration_s`: 执行持续时间（秒）。当 > 0 时，触发后不会立即产出结果，而是进入"执行中"状态，倒计时结束后才执行随机池和必定触发效果，期间按钮显示"执行中"
 - `mutex`: 互斥触发器 ID 列表（单向）。若 A 声明与 B 互斥，则 B 处于冷却时 A 不可使用；但 B 未声明与 A 互斥时，B 不受 A 的冷却影响
+- `requires_item`: 背包条件（必须拥有）。支持字符串或字符串数组；未满足时触发失败
+- `requires_no_item`: 背包条件（必须不拥有）。支持字符串或字符串数组；不满足时触发失败
 - `guaranteed`: 必定触发的效果（字典）
   - `items`: 物品列表 `[{"id": "xxx", "count": 1}]`
   - `buffs`: buff ID 列表 `["buff_id"]`
@@ -276,6 +297,8 @@ i18 说明：
   "desc_i18n_key": "life.trigger.explore_park.desc",
   "cooldown_s": 120,
   "duration_s": 30,
+  "requires_item": "library_card",
+  "requires_no_item": ["injured_badge"],
   "mutex": ["read_book"],
   "guaranteed": {
     "items": [],
@@ -424,3 +447,153 @@ mod/my_mod/
 ## 14. 后续扩展建议
 - 若 mod 需要接入未来新增资源类型，优先遵循统一资源钩子协议，而不是绕过 `LifeModRegistry` 直接改全局状态。
 - 资源装配应满足“可加载、可回滚、可诊断”三项要求，避免产生半加载状态。
+
+## 15. 最小可运行示例（区间 buff）
+
+下面给出一个可直接复制的最小示例，演示状态区间 buff 的两种写法：
+- 数值区间：`min/max`
+- 百分比区间：`percent_min/percent_max`
+
+示例目录：
+
+```text
+mod/demo.threshold/
+├─ pack_info.json
+├─ status/
+│  └─ status.json
+└─ buff/
+   └─ status/
+      └─ status_buffs.json
+```
+
+`pack_info.json`：
+
+```json
+{
+  "id": "demo.threshold",
+  "name": "Threshold Demo",
+  "version": "0.1.0",
+  "requires": [],
+  "conflicts": []
+}
+```
+
+`status/status.json`（仅示意 `energy`）：
+
+```json
+[
+  {
+    "id": "energy",
+    "name": "ENERGY",
+    "i18n_key": "life.state.energy",
+    "default": 1000,
+    "min": 0,
+    "max": 1000,
+    "order": 40,
+    "effects": [
+      {
+        "min": 800,
+        "max": 1200,
+        "buff_id": "strong"
+      },
+      {
+        "percent_min": 10,
+        "percent_max": 20,
+        "buff_id": "exhausted"
+      }
+    ]
+  }
+]
+```
+
+`buff/status/status_buffs.json`：
+
+```json
+[
+  {
+    "id": "strong",
+    "name": "强壮",
+    "desc": "体力充沛，力量显著提升。",
+    "str": 4
+  },
+  {
+    "id": "exhausted",
+    "name": "疲惫",
+    "desc": "力量与敏捷下降，行动明显变得迟缓。",
+    "str": -2,
+    "agi": -2
+  }
+]
+```
+
+行为说明：
+- `strong`: 当 `800 <= energy < 1200` 时激活，离开区间自动移除。
+- `exhausted`: 当 `10% <= energy/base_max*100 < 20%` 时激活，离开区间自动移除。
+
+## 16. 接口覆盖清单（0.3）
+
+内置自动事务接入目录：
+- `status/`
+- `buff/`
+- `item/`
+- `nutrition/`
+- `lang/`
+- `event_trigger/`
+- `event_outcome/`
+
+可扩展（非目录约定、需要钩子）：
+- 其它自定义资源类型：通过 `register_resource_hook()` 接入。
+
+兼容接口（可选）：
+- `register_life_nutrition_hook()`：仍可使用，但默认内置流程已自动处理 `nutrition/`。
+
+## 17. 快速验证步骤
+
+1. 放置示例目录后启动程序。
+2. 在调试窗口将体力设为 `900`，确认 `strong` 生效（力量 +4）。
+3. 将体力设为 `150`（基础上限 1000 的 15%），确认 `exhausted` 生效（力量/敏捷 -2）。
+4. 将体力设为 `250`，确认 `exhausted` 自动移除。
+5. 查看日志，确认无 schema error。
+
+## 18. 常见错误排查
+
+### 1) 百分比区间写成 0~1 导致不生效
+- 错误示例：`percent_min: 0.1, percent_max: 0.2`
+- 正确写法：`percent_min: 10, percent_max: 20`
+- 原因：百分比区间单位是 `0~100`，不是 `0~1`。
+
+### 2) 区间边界理解错误
+- 系统使用左闭右开：`[min, max)`。
+- 例如 `min=800, max=1200`：命中 `800 <= value < 1200`，`1200` 不命中。
+- 百分比区间同理：`percent_min <= percent < percent_max`。
+
+### 3) 百分比基准用错
+- 状态百分比基准：`当前状态值 / 该状态基础上限(max) * 100`
+- 营养百分比基准：`当前营养值 / 该营养基础上限(max) * 100`
+- 注意：这里是“基础上限”，不是实时修正后的上限。
+
+### 4) buff_id 存在但效果没变化
+- 检查对应 buff 文件是否被加载到 `buff/` 目录链路。
+- 检查 `id` 拼写是否完全一致（区分大小写）。
+- 检查 buff 是否只有描述没有数值字段（如缺少 `str`/`agi`/`hp` 等）。
+
+### 5) 进入区间后生效，离开区间不恢复
+- 先确认使用的是 `buff_id` 方式（托管 buff）。
+- 若用 `states/attrs` 旧式每 tick 直改，则不会自动回滚，属于设计行为。
+- 建议优先使用 `buff_id` 管理可逆效果。
+
+### 6) 多个区间规则互相覆盖
+- 同一状态/营养可同时命中多条规则并叠加效果。
+- 建议避免重叠区间，或显式规划叠加策略。
+
+### 7) Mod 加载后无任何变化
+- 检查目录层级是否正确：`mod/{id}/status/*.json`、`mod/{id}/buff/**/*.json`。
+- 检查 `pack_info.json` 是否有效且 `id` 唯一。
+- 检查是否被 `requires/conflicts/requires_versions` 拦截。
+
+### 8) 快速自检清单（建议按顺序）
+1. `pack_info.json` 是否可解析且字段齐全。
+2. `status/nutrition` 区间字段是否使用正确单位与边界。
+3. `buff_id` 是否存在于已加载 buff 注册表。
+4. 调试窗口中状态值是否确实进入目标区间。
+5. 日志中是否出现 schema error/warn 与依赖冲突提示。

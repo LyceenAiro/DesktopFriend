@@ -27,25 +27,25 @@ class AutoWalk:
         self._walk_left_per = smart_config.get("walk_left_per", 2)
         self._walk_right_per = smart_config.get("walk_right_per", 2)
         self._jump_per = smart_config.get("jump_per", 5)
-        _log.INFO("Register AutoWalk success")
+        _log.DEBUG("Register AutoWalk success")
 
     def stop_timer(self):
         """停止定时器"""
         self.timer.stop()
-        _log.INFO("[AI]AutoWalk timer stopped")
+        _log.DEBUG("[AI]AutoWalk timer stopped")
 
     def start_timer(self):
         """启动定时器"""
         self.timer.stop()  # 先停止
         self._last_check_ts = time.time()
         self.timer.start(self.check_time)  # 使用最新检查间隔启动
-        _log.INFO(f"[AI]AutoWalk timer started, interval: {self.check_time}ms, active: {self.timer.isActive()}")
+        _log.DEBUG(f"[AI]AutoWalk timer started, interval: {self.check_time}ms, active: {self.timer.isActive()}")
 
     def reset_idle(self):
         """重置空闲时间"""
         self.idle_time = 0
         self._last_check_ts = time.time()
-        _log.INFO("[AI]Idle time reset")
+        _log.DEBUG("[AI]Idle time reset")
 
     def _on_timer(self):
         now_ts = time.time()
@@ -57,7 +57,7 @@ class AutoWalk:
         if PetWindow.AutoMove and not self.is_paused_due_to_action and not PetWindow.is_follow_mouse and self.idle_time > self.idle_threshold:
             self._perform_random_action()
         else:
-            _log.INFO(
+            _log.DEBUG(
                 f"[AI]AutoWalk is disabled or paused. AutoMove: {PetWindow.AutoMove}, "
                 f"Paused: {self.is_paused_due_to_action}, FollowMouse: {PetWindow.is_follow_mouse}, Idle: {self.idle_time:.1f}s"
             )
@@ -96,7 +96,7 @@ class AutoWalk:
         left_ok = self._can_move_left(walk_count)
         right_ok = self._can_move_right(walk_count)
         rand = random.randint(1, 100)
-        _log.INFO(f"[AI]AutoWalk code {rand}, left_ok={left_ok}, right_ok={right_ok}")
+        _log.DEBUG(f"[AI]AutoWalk code {rand}, left_ok={left_ok}, right_ok={right_ok}")
 
         if rand <= left_rand_ok:
             if left_ok:
@@ -123,7 +123,7 @@ class AutoWalk:
 
     def _rand_walk(self):
         rand = random.randint(2, 10)
-        _log.INFO(f"[AI]Random walk count: {rand}")
+        _log.DEBUG(f"[AI]Random walk count: {rand}")
         return rand
 
     def _no_action(self):
