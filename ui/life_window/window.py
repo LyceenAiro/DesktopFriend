@@ -29,6 +29,7 @@ from ui.styles.dialog_theme import apply_adobe_dialog_theme, apply_frameless_win
 from ui.styles.fade_scrollarea import FadeScrollArea
 from util.cfg import load_config
 from util.i18n import tr
+from util.life_utils import format_duration as _format_duration
 
 
 class LifeWindow(QDialog):
@@ -158,7 +159,12 @@ class LifeWindow(QDialog):
         self.scroll_content = QFrame()
         self.scroll_content.setStyleSheet("QFrame { background-color: #262626; border: none; }")
         self.scroll_area.setWidget(self.scroll_content)
-        content_layout.addWidget(self.scroll_area)
+        content_layout.addWidget(self.scroll_area, 1)
+
+        self.death_overlay = self._build_death_overlay()
+        self.death_overlay.setVisible(False)
+        content_layout.addWidget(self.death_overlay, 1)
+
         main_layout.addLayout(content_layout, 1)
 
         self.bottom_bar = QFrame()
@@ -212,6 +218,8 @@ class LifeWindow(QDialog):
                 get_item_class_registry=self.life.get_item_class_registry,
                 feedback_callback=self._set_feedback,
                 refresh_callback=self.refresh_view,
+                can_use_item_with_reason=self.life.can_use_item_with_reason,
+                get_item_fail_message=self.life.get_item_fail_message,
             ),
             LifeEffectsTab.tab_name: LifeEffectsTab(
                 get_effect_detail=self.life.get_effect_detail,
@@ -228,6 +236,7 @@ class LifeWindow(QDialog):
                 get_trigger_class_registry=self.life.get_trigger_class_registry,
                 feedback_callback=self._set_feedback,
                 refresh_callback=self.refresh_view,
+                get_trigger_fail_message=self.life.get_trigger_fail_message,
             ),
         }
 
@@ -291,6 +300,23 @@ class LifeWindow(QDialog):
         self.pin_button.setIcon(create_pin_icon(color, active=self._always_on_top))
 
     def refresh_view(self):
+        # --- 死亡状态检测：切换覆盖层 ---
+        # 若 HP 已被外部（调试/重置）恢复到 > 0，自动执行复活
+        if self.life.is_dead:
+            hp = float(self.life.profile.states.get("hp", 0.0))
+            if hp > 0:
+                self.life.revive()
+            else:
+                self._update_death_overlay()
+                self.nav_frame.setVisible(False)
+                self.scroll_area.setVisible(False)
+                self.death_overlay.setVisible(True)
+                return
+
+        self.nav_frame.setVisible(True)
+        self.scroll_area.setVisible(True)
+        self.death_overlay.setVisible(False)
+
         completed_triggers = self.life.pop_completed_trigger_results()
 
         profile = self.life.profile
@@ -298,6 +324,7 @@ class LifeWindow(QDialog):
         items = self.life.get_inventory_snapshot()
         effects = list(profile.active_effects)
         triggers = self.life.get_event_triggers_snapshot()
+        tag_display_map = self.life.get_tag_display_map()
 
         states_tab = self.tab_widgets.get(LifeStatesTab.tab_name)
         nutrition_tab = self.tab_widgets.get(LifeNutritionTab.tab_name)
@@ -323,7 +350,7 @@ class LifeWindow(QDialog):
 
         if inventory_tab is not None:
             if inv_changed or self.active_tab != LifeInventoryTab.tab_name:
-                inventory_tab.update_data(items, self.developer_mode)
+                inventory_tab.update_data(items, self.developer_mode, tag_display_map)
                 self._last_item_sig = current_item_sig
 
         if effects_tab is not None:
@@ -333,7 +360,7 @@ class LifeWindow(QDialog):
 
         if events_tab is not None:
             if completed_triggers or trg_changed or self.active_tab != LifeEventsTab.tab_name:
-                events_tab.update_data(triggers, self.developer_mode)
+                events_tab.update_data(triggers, self.developer_mode, tag_display_map)
                 self._last_trigger_sig = current_trigger_sig
 
         # 任意标签页都提示“执行完成”
@@ -342,6 +369,100 @@ class LifeWindow(QDialog):
                 completed_triggers[-1].get("trigger_id", "")
             )
             self._set_feedback(tr("life.events.completed", name=latest_name), "info")
+
+    def _is_in_resize_zone(self, local_pos) -> bool:
+        return local_pos.y() >= self.height() - self._resize_grip_size
+
+    def _build_death_overlay(self) -> QFrame:
+        """构建死亡覆盖层（静态结构，动态标签在 _update_death_overlay 中更新）。"""
+        overlay = QFrame()
+        overlay.setStyleSheet("QFrame { background-color: #262626; border: none; }")
+
+        outer = QVBoxLayout(overlay)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch(1)
+
+        center = QFrame()
+        center.setStyleSheet("QFrame { background: transparent; border: none; }")
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(40, 32, 40, 32)
+        center_layout.setSpacing(10)
+        center_layout.setAlignment(Qt.AlignCenter)
+
+        # 十字标记代替 emoji
+        cross_label = QLabel("✦")
+        cross_label.setAlignment(Qt.AlignCenter)
+        cross_label.setStyleSheet(
+            "font-size: 36px; color: #e06060; background: transparent; border: none; letter-spacing: 4px;"
+        )
+        center_layout.addWidget(cross_label)
+
+        center_layout.addSpacing(4)
+
+        title_label = QLabel(tr("life.death.title"))
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet(
+            "font-size: 22px; font-weight: 700; color: #e06060; background: transparent; border: none; letter-spacing: 1px;"
+        )
+        center_layout.addWidget(title_label)
+
+        subtitle_label = QLabel(tr("life.death.subtitle"))
+        subtitle_label.setAlignment(Qt.AlignCenter)
+        subtitle_label.setStyleSheet("font-size: 12px; color: #777; background: transparent; border: none;")
+        center_layout.addWidget(subtitle_label)
+
+        center_layout.addSpacing(20)
+
+        self._death_playtime_label = QLabel("")
+        self._death_playtime_label.setAlignment(Qt.AlignCenter)
+        self._death_playtime_label.setStyleSheet(
+            "font-size: 12px; color: #999; background: transparent; border: none;"
+        )
+        center_layout.addWidget(self._death_playtime_label)
+
+        self._death_diedat_label = QLabel("")
+        self._death_diedat_label.setAlignment(Qt.AlignCenter)
+        self._death_diedat_label.setStyleSheet(
+            "font-size: 12px; color: #999; background: transparent; border: none;"
+        )
+        center_layout.addWidget(self._death_diedat_label)
+
+        center_layout.addSpacing(28)
+
+        # 分割线
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setFixedWidth(200)
+        divider.setStyleSheet("background-color: #3a3a3a; border: none;")
+        center_layout.addWidget(divider, 0, Qt.AlignCenter)
+
+        center_layout.addSpacing(12)
+
+        hint_label = QLabel(tr("life.death.reset_hint"))
+        hint_label.setAlignment(Qt.AlignCenter)
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet("font-size: 11px; color: #555; background: transparent; border: none;")
+        center_layout.addWidget(hint_label)
+
+        outer.addWidget(center, 0, Qt.AlignHCenter)
+        outer.addStretch(1)
+        return overlay
+
+    def _update_death_overlay(self) -> None:
+        """用最新死亡摘要数据更新覆盖层标签。"""
+        import datetime
+        summary = self.life.get_death_summary()
+        play_time_s = float(summary.get("play_time_s", 0))
+        died_at = summary.get("died_at", 0)
+
+        self._death_playtime_label.setText(
+            tr("life.death.play_time", time=_format_duration(play_time_s))
+        )
+        if died_at:
+            died_str = datetime.datetime.fromtimestamp(died_at).strftime("%Y-%m-%d %H:%M:%S")
+            self._death_diedat_label.setText(tr("life.death.died_at", time=died_str))
+        else:
+            self._death_diedat_label.setText("")
 
     def _is_in_resize_zone(self, local_pos) -> bool:
         return local_pos.y() >= self.height() - self._resize_grip_size

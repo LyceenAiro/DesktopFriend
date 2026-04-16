@@ -194,6 +194,7 @@ class UnifiedSettingsWindow(QDialog):
                 set_enabled_callback=self._set_life_enabled,
                 reset_callback=self._reset_life,
                 feedback_callback=self._set_feedback,
+                is_dead_getter=self._is_life_dead,
             ),
             AboutTab.tab_name: AboutTab(),
         }
@@ -523,6 +524,10 @@ class UnifiedSettingsWindow(QDialog):
     def _is_life_enabled(self) -> bool:
         from module.life.runtime import is_life_loop_active
         return is_life_loop_active()
+
+    def _is_life_dead(self) -> bool:
+        from module.life.runtime import get_life_system
+        return get_life_system().is_dead
 
     def _set_life_enabled(self, enabled: bool) -> None:
         from module.life.runtime import set_life_enabled

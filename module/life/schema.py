@@ -144,6 +144,14 @@ def validate_buff_record(
             "attribute",
             "status",
             "_classes",
+            # 条件与标签系统（Phase 1）
+            "consume_self",
+            "requires_buff",
+            "requires_no_buff",
+            "restrict_item_tags",
+            "restrict_trigger_tags",
+            "tags",
+            "fail_messages",
         }:
             continue
 
@@ -217,6 +225,11 @@ def validate_item_record(
             "category",
             "consumable",
             "_classes",
+            # 条件与标签系统（Phase 1）
+            "requires_buff",
+            "requires_no_buff",
+            "tags",
+            "fail_messages",
         }:
             continue
 
@@ -343,6 +356,9 @@ def _validate_random_pools(
             chance = entry.get("chance")
             if chance is not None and not _is_number_like(chance):
                 issues.append(ValidationIssue("error", f"{entry_path}.chance 必须为数值", source, record_id, f"{entry_path}.chance"))
+            attr_bonus = entry.get("attr_bonus")
+            if attr_bonus is not None and not isinstance(attr_bonus, dict):
+                issues.append(ValidationIssue("error", f"{entry_path}.attr_bonus 必须是字典", source, record_id, f"{entry_path}.attr_bonus"))
 
 
 def validate_event_trigger_record(
@@ -402,6 +418,9 @@ def validate_event_trigger_record(
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
         "cooldown_s", "duration_s", "mutex", "guaranteed", "random_pools",
         "requires_item", "requires_no_item",
+        # 条件与标签系统（Phase 1）
+        "requires_buff", "requires_no_buff",
+        "tags", "fail_messages",
         "_classes",
     }
     for key in record:
@@ -437,6 +456,93 @@ def validate_event_outcome_record(
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
         "guaranteed", "random_pools", "effects",
+    }
+    for key in record:
+        if key not in known_keys:
+            issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    return issues
+
+
+def validate_passive_buff_record(
+    record: dict[str, Any],
+    source: str,
+) -> list[ValidationIssue]:
+    """校验被动 buff 触发器记录（module/life/passive_buff/ 目录）。"""
+    issues: list[ValidationIssue] = []
+    record_id = str(record.get("id") or record.get("name") or "<unknown>")
+
+    if "id" not in record or not str(record.get("id", "")).strip():
+        issues.append(ValidationIssue("error", "passive_buff 缺少 id", source, record_id, "id"))
+
+    base_chance = record.get("base_chance")
+    if base_chance is not None and not _is_number_like(base_chance):
+        issues.append(ValidationIssue("error", "base_chance 必须为数值", source, record_id, "base_chance"))
+
+    attr_bonus = record.get("attr_bonus")
+    if attr_bonus is not None and not isinstance(attr_bonus, dict):
+        issues.append(ValidationIssue("error", "attr_bonus 必须是字典", source, record_id, "attr_bonus"))
+
+    attr_conditions = record.get("attr_conditions")
+    if attr_conditions is not None:
+        if not isinstance(attr_conditions, list):
+            issues.append(ValidationIssue("error", "attr_conditions 必须是列表", source, record_id, "attr_conditions"))
+        else:
+            for i, cond in enumerate(attr_conditions):
+                if not isinstance(cond, dict):
+                    issues.append(ValidationIssue("error", f"attr_conditions[{i}] 必须是字典", source, record_id, f"attr_conditions[{i}]"))
+                    continue
+                if "attr" not in cond or not str(cond.get("attr", "")).strip():
+                    issues.append(ValidationIssue("error", f"attr_conditions[{i}] 缺少 attr", source, record_id, f"attr_conditions[{i}].attr"))
+                for k in ("min", "max"):
+                    if k in cond and not _is_number_like(cond[k]):
+                        issues.append(ValidationIssue("error", f"attr_conditions[{i}].{k} 必须为数值", source, record_id, f"attr_conditions[{i}].{k}"))
+
+    on_trigger = record.get("on_trigger")
+    if on_trigger is not None and not isinstance(on_trigger, dict):
+        issues.append(ValidationIssue("error", "on_trigger 必须是字典", source, record_id, "on_trigger"))
+
+    known_keys = {
+        "id", "name",
+        "base_chance", "attr_bonus", "attr_conditions",
+        "requires_buff", "requires_no_buff",
+        "on_trigger",
+    }
+    for key in record:
+        if key not in known_keys:
+            issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    return issues
+
+
+def validate_attr_record(
+    record: dict[str, Any],
+    source: str,
+) -> list[ValidationIssue]:
+    """校验属性定义记录（module/life/attrs/ 目录）。"""
+    issues: list[ValidationIssue] = []
+    record_id = str(record.get("id") or record.get("name") or "<unknown>")
+
+    if "id" not in record or not str(record.get("id", "")).strip():
+        issues.append(ValidationIssue("error", "attr 缺少 id", source, record_id, "id"))
+    if "name" not in record:
+        issues.append(ValidationIssue("warn", "attr 缺少 name", source, record_id, "name"))
+
+    initial = record.get("initial")
+    if initial is not None and not _is_number_like(initial):
+        issues.append(ValidationIssue("error", "initial 必须为数值", source, record_id, "initial"))
+
+    color = record.get("color")
+    if color is not None and not isinstance(color, str):
+        issues.append(ValidationIssue("error", "color 必须是字符串（如 #e06c75）", source, record_id, "color"))
+
+    order = record.get("order")
+    if order is not None and not isinstance(order, int):
+        issues.append(ValidationIssue("warn", "order 建议为整数", source, record_id, "order"))
+
+    known_keys = {
+        "id", "name", "i18n_key", "color", "initial", "order",
+        "desc", "description", "desc_i18n_key", "description_i18n_key",
     }
     for key in record:
         if key not in known_keys:

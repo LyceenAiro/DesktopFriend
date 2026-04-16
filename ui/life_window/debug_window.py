@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ui.styles.fade_scrollarea import FadeScrollArea
+
 from module.life.runtime import get_life_system
 from ui.life_window.common import attach_window_shadow, create_pin_icon, style_window_controls
 from ui.setting.common import create_section_card
@@ -135,11 +137,9 @@ class LifeDebugWindow(QDialog):
         self.nav_layout.setSpacing(8)
         content_layout.addWidget(self.nav_frame)
 
-        self.scroll_area = QScrollArea()
+        self.scroll_area = FadeScrollArea()
         self.scroll_area.setStyleSheet(SCROLL_AREA_STYLE)
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self.scroll_content = QFrame()
         self.scroll_content.setStyleSheet("QFrame { background-color: #262626; border: none; }")

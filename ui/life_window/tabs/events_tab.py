@@ -49,6 +49,7 @@ class LifeEventsTab(QFrame):
         get_trigger_class_registry: Callable[[], dict[str, dict[str, Any]]],
         feedback_callback: Callable[[str, str], None],
         refresh_callback: Callable[[], None],
+        get_trigger_fail_message: Callable[[str, str], str | None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -63,6 +64,7 @@ class LifeEventsTab(QFrame):
         self._get_trigger_class_registry = get_trigger_class_registry
         self._feedback_callback = feedback_callback
         self._refresh_callback = refresh_callback
+        self._get_trigger_fail_message = get_trigger_fail_message
         self._rows: list[QFrame] = []
         self._result_rows: list[QFrame] = []
         self._active_class: str | None = None  # None = 全部
@@ -126,9 +128,10 @@ class LifeEventsTab(QFrame):
 
         self._last_result: dict[str, Any] | None = None
 
-    def update_data(self, triggers: list[dict[str, Any]], developer_mode: bool = False) -> None:
+    def update_data(self, triggers: list[dict[str, Any]], developer_mode: bool = False, tag_display_map: dict | None = None) -> None:
         self._triggers = list(triggers)
         self._developer_mode = bool(developer_mode)
+        self._tag_display_map = tag_display_map or {}
         self._rebuild_sub_tabs()
         self._rebuild_trigger_rows()
 
@@ -289,9 +292,23 @@ class LifeEventsTab(QFrame):
         text_block = QVBoxLayout()
         text_block.setSpacing(3)
 
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
         title = QLabel(trigger.get("name", trigger.get("id", "unknown")))
         title.setStyleSheet("font-weight: 700; color: #f3f3f3; background: transparent; border: none;")
-        text_block.addWidget(title)
+        title_row.addWidget(title)
+        for tag_id in trigger.get("tags", []):
+            tag_info = self._tag_display_map.get(tag_id)
+            if tag_info:
+                bubble = QLabel(tag_info["name"])
+                color = tag_info["color"]
+                bubble.setStyleSheet(
+                    f"background: {color}33; color: #ffffff; border: 1px solid {color}66; "
+                    "border-radius: 3px; padding: 0px 4px; font-size: 9px; font-weight: 600;"
+                )
+                title_row.addWidget(bubble)
+        title_row.addStretch()
+        text_block.addLayout(title_row)
 
         details: list[str] = []
         if self._developer_mode:
@@ -342,6 +359,7 @@ class LifeEventsTab(QFrame):
         item_blocked = not can_fire and (
             block_reason.startswith("missing_item:") or block_reason.startswith("has_item:")
         )
+        tag_or_dead_blocked = not can_fire and block_reason in ("dead", "tag_restricted")
         if executing:
             fire_btn = QPushButton(tr("life.events.fire_executing_btn"))
             fire_btn.setFixedWidth(72)
@@ -352,7 +370,7 @@ class LifeEventsTab(QFrame):
             fire_btn.setFixedWidth(72)
             fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
             fire_btn.setStyleSheet(busy_style)
-        elif item_blocked:
+        elif item_blocked or tag_or_dead_blocked:
             fire_btn = QPushButton(tr("life.events.fire_blocked_btn"))
             fire_btn.setFixedWidth(72)
             fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
@@ -385,6 +403,18 @@ class LifeEventsTab(QFrame):
             return
         can, reason = self._can_fire_trigger(trigger_id)
         if not can:
+            if reason == "dead":
+                self._feedback_callback(tr("life.events.fire_dead"), "warning")
+                return
+            if reason == "tag_restricted":
+                self._feedback_callback(tr("life.events.fire_tag_restricted"), "warning")
+                return
+            # 优先显示自定义失败文本
+            if self._get_trigger_fail_message is not None:
+                custom_msg = self._get_trigger_fail_message(trigger_id, reason)
+                if custom_msg:
+                    self._feedback_callback(custom_msg, "warning")
+                    return
             if reason == "executing":
                 exec_remaining = self._get_trigger_executing_remaining(trigger_id)
                 if exec_remaining > 0:

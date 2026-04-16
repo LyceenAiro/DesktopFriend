@@ -75,6 +75,7 @@ class LifeNutritionTab(QFrame):
             value = float(row.get("value", nutrition_def.get("default", 0.0)))
             vmax = float(row.get("max", nutrition_def.get("max", 100.0)))
             decay = float(row.get("decay", nutrition_def.get("decay", 0.0)))
+            tick_delta = float(row.get("tick_delta", -decay))
             safe_max = vmax if vmax > 0 else 1.0
             percent = int(round(max(0.0, min(1.0, value / safe_max)) * 100))
             if 0 < percent < self._MIN_VISIBLE_PERCENT:
@@ -89,7 +90,7 @@ class LifeNutritionTab(QFrame):
                 )
             )
             self.progress_rows[nutrition_id].set_legacy_metrics(
-                tick_delta=-decay,
+                tick_delta=tick_delta,
                 fixed_delta=0.0,
                 percent_delta=0.0,
                 percent_value=0.0,

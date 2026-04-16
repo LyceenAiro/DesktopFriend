@@ -3,9 +3,9 @@
 本文档用于第三方开发者编写 LIFE 模组，目标是做到“新增文件即可注册”。
 
 当前能力核对（与现有代码一致）：
-- 已接入：`status/`、`buff/`、`item/`、`nutrition/`、`lang/`、`event_trigger/`、`event_outcome/`（由内置加载流程自动处理）。
+- 已接入：`status/`、`buff/`、`item/`、`nutrition/`、`lang/`、`event_trigger/`、`event_outcome/`、`passive_buff/`、`attrs/`（由内置加载流程自动处理）。
 - 可扩展：自定义资源可通过 `register_resource_hook()` 挂入同一事务。
-- 事务回滚：失败时会回滚 `status/buff/item/nutrition/lang/event_trigger/event_outcome` 与已注册 hook 资源。
+- 事务回滚：失败时会回滚所有上述目录资源与已注册 hook 资源。
 
 ## 1. 目录结构
 推荐的 mod 包结构：
@@ -19,6 +19,8 @@ mod/{your_mod}/
 │  └─ *.json
 ├─ status/
 │  └─ *.json
+├─ attrs/
+│  └─ *.json                  ← 可选：注册自定义属性
 ├─ buff/
 │  ├─ class.json              ← 可选：分类注册
 │  ├─ potion/
@@ -41,11 +43,13 @@ mod/{your_mod}/
 │  └─ learning/
 │     ├─ class.json
 │     └─ *.json
-└─ event_outcome/
-   └─ *.json
+├─ event_outcome/
+│  └─ *.json
+└─ passive_buff/
+   └─ *.json                  ← 可选：注册挂机随机 buff 触发器
 ```
 
-当前 0.3 版本核心对 mod 目录的自动接入范围是 `status` / `buff` / `item` / `nutrition` / `lang` / `event_trigger` / `event_outcome`。
+当前 0.3 版本核心对 mod 目录的自动接入范围是 `status` / `buff` / `item` / `nutrition` / `lang` / `event_trigger` / `event_outcome` / `passive_buff` / `attrs`。
 其中 `lang` 目录约定为 `mod/{your_mod}/lang/xx_xx.json`，会在加载时自动接入翻译系统并在回滚时移除。
 `register_life_nutrition_hook()` 仍可用，但主要用于旧版本兼容或自定义钩子行为；默认内置加载器已经自动处理 `nutrition/`。
 
@@ -131,6 +135,8 @@ i18 说明：
 - 持续时长：`{state_id}st`
 - 叠加规则：`{state_id}sr`，值为 `add/noadd/refresh`
 - 上下限：`*_max/*_min/*_max2`（支持数值或百分比字符串）
+- `restrict_item_tags`: 激活期间仅允许带有这些标签的物品被使用（参见第 18 节）
+- `restrict_trigger_tags`: 激活期间仅允许带有这些标签的事件被触发（参见第 18 节）
 
 示例：
 
@@ -161,7 +167,9 @@ i18 说明：
 
 可选字段：
 - `usable`: 是否可使用（默认 true）
+- `tags`: 标签列表（字符串数组），用于标签限制系统匹配（参见第 18 节）
 - `nutrition`: 营养改动字典，格式为 `{nutrition_id: delta}`
+- `buff_refs`: buff ID 列表，使用该物品时自动触发对应 buff
 - 其余状态/持续/上下限字段与 buff 一致
 
 示例：
@@ -270,6 +278,7 @@ i18 说明：
 - `cooldown_s`: 触发后冷却秒数
 - `duration_s`: 执行持续时间（秒）。当 > 0 时，触发后不会立即产出结果，而是进入"执行中"状态，倒计时结束后才执行随机池和必定触发效果，期间按钮显示"执行中"
 - `mutex`: 互斥触发器 ID 列表（单向）。若 A 声明与 B 互斥，则 B 处于冷却时 A 不可使用；但 B 未声明与 A 互斥时，B 不受 A 的冷却影响
+- `tags`: 标签列表（字符串数组），用于标签限制系统匹配（参见第 18 节）
 - `requires_item`: 背包条件（必须拥有）。支持字符串或字符串数组；未满足时触发失败
 - `requires_no_item`: 背包条件（必须不拥有）。支持字符串或字符串数组；不满足时触发失败
 - `guaranteed`: 必定触发的效果（字典）
@@ -280,11 +289,13 @@ i18 说明：
 
 随机池规则：
 - 每个池包含 `entries` 列表
-- 每个 entry 有 `type`（`item`/`buff`/`outcome`）、`id`、`chance`（概率百分比）
+- 每个 entry 有 `type`（`item`/`buff`/`outcome`）、`id`、`chance`（基础概率，百分比）
 - item 类型额外支持 `count` 字段
-- 若池内所有 chance 之和 ≤ 100%：单次抽取
-- 若 > 100% 且 ≤ 300%：所有 chance 除以 2，抽取 2 次
-- 若 > 300%：所有 chance 除以 4，抽取 4 次
+- 可选字段 `attr_bonus`：属性加成字典，格式 `{"attr_id": multiplier}`；有效概率 = max(0, base_chance + Σ(attr_val * mult))
+- 归一化算法：
+  - `base_no_fire = max(0, 100 - Σbase_chances)`（不受属性影响）
+  - 若 `Σeffective_chances + base_no_fire > 100`：整体等比缩放到 100%
+  - 单次 roll，落在 no-fire 区则不触发任何条目
 
 示例：
 
@@ -530,6 +541,79 @@ mod/demo.threshold/
 - `strong`: 当 `800 <= energy < 1200` 时激活，离开区间自动移除。
 - `exhausted`: 当 `10% <= energy/base_max*100 < 20%` 时激活，离开区间自动移除。
 
+## 11b. passive_buff json 规则（挂机随机 buff 触发器）
+
+`passive_buff/` 目录内的 JSON 定义“挂机触发器”，每 tick 按概率自动尝试触发。
+
+必填字段：
+- `id` 唯一标识
+- `base_chance` 触发概率（百分比，0~100）
+
+可选字段：
+- `name` 展示名（仅用于日志识别）
+- `requires_buff` / `requires_no_buff`：字符串或列表；必须拥有/不拥有指定 buff 才允许触发
+- `attr_conditions`：属性区间条件列表，格式 `[{"attr": "vit", "min": 0, "max": 5}]`
+- `attr_bonus`：属性加成字典 `{"attr_id": multiplier}`；有效概率 = max(0, base_chance + Σ(attr_val * mult))
+- `on_trigger`：触发后执行的操作（字典）：
+  - `buff_id`：应用指定 buff
+  - 其他造成直接状态/营养变化：与 buff 字段一致（如 `hp: -5`）
+
+示例：
+
+```json
+[
+  {
+    "id": "cold_chance",
+    "name": "随机感冒",
+    "base_chance": 5.0,
+    "requires_no_buff": ["sick", "protected"],
+    "attr_conditions": [{"attr": "vit", "max": 8}],
+    "attr_bonus": {"vit": -0.5},
+    "on_trigger": {"buff_id": "sick"}
+  }
+]
+```
+
+说明：体质 ≤ 8 且未生病/受保护时，每 tick 有 `max(0, 5 + vit * (-0.5))%` 概率触发感冒 buff。
+
+---
+
+## 11c. attrs json 规则（属性定义）
+
+`attrs/` 目录内的 JSON 定义属性项。不存在则回退到内置 7 个属性（vit/str/spd/agi/spi/int/ill）。
+
+必填字段：
+- `id` 唯一标识
+
+推荐字段：
+- `name` 展示名
+- `i18n_key` 名称翻译键（默认 `life.attr.{id}`）
+- `color` 主题色（十六进制颜色字符串，如 `#e06c75`）
+- `initial` 初始属性值（默认 10.0）
+- `order` 排序（数字越小越靠前）
+- `level_table` 经验/等级表（可选，见 Phase 5）：
+  ```json
+  "level_table": [
+    {"level": 1, "exp_required": 100, "permanent_bonus": {"hp_max": 10}},
+    {"level": 2, "exp_required": 250, "permanent_bonus": {"hp_max": 20}}
+  ]
+  ```
+
+示例：
+
+```json
+[
+  {"id": "vit", "name": "体质", "i18n_key": "life.attr.vit", "color": "#e06c75", "initial": 10, "order": 10,
+   "level_table": [
+     {"level": 1, "exp_required": 100, "permanent_bonus": {"hp_max": 5}},
+     {"level": 2, "exp_required": 250, "permanent_bonus": {"hp_max": 10}}
+   ]},
+  {"id": "int", "name": "智力", "i18n_key": "life.attr.int", "color": "#8b6fd6", "initial": 10, "order": 60}
+]
+```
+
+---
+
 ## 16. 接口覆盖清单（0.3）
 
 内置自动事务接入目录：
@@ -540,6 +624,8 @@ mod/demo.threshold/
 - `lang/`
 - `event_trigger/`
 - `event_outcome/`
+- `passive_buff/`
+- `attrs/`
 
 可扩展（非目录约定、需要钩子）：
 - 其它自定义资源类型：通过 `register_resource_hook()` 接入。
@@ -555,7 +641,81 @@ mod/demo.threshold/
 4. 将体力设为 `250`，确认 `exhausted` 自动移除。
 5. 查看日志，确认无 schema error。
 
-## 18. 常见错误排查
+## 18. 标签限制系统（Tag Restriction）
+
+当特定 buff 激活时，可以限制玩家只能使用带有指定标签的物品或触发带有指定标签的事件。这是实现"濒死状态仅能使用急救物品/事件"等机制的核心系统。
+
+### 原理
+- buff 记录中声明 `restrict_item_tags` / `restrict_trigger_tags`（字符串数组）。
+- 当该 buff 处于激活状态时，玩家使用物品或触发事件前系统会检查：
+  - 若物品/事件的 `tags` 与 buff 的 `restrict_*_tags` 有交集 → 允许操作。
+  - 若无交集 → 操作被拒绝，UI 显示"不可用"按钮并以 toast 提示原因。
+
+### buff 端声明
+
+在 buff JSON 中添加限制标签：
+
+```json
+{
+  "id": "dying",
+  "name": "濒死",
+  "desc": "生命体征微弱，仅能进行急救相关的操作。",
+  "restrict_item_tags": ["first_aid"],
+  "restrict_trigger_tags": ["first_aid"]
+}
+```
+
+- `restrict_item_tags`: 激活时仅允许带有这些标签的物品被使用。
+- `restrict_trigger_tags`: 激活时仅允许带有这些标签的事件被触发。
+
+### 物品端声明
+
+在 item JSON 中添加 `tags` 字段：
+
+```json
+{
+  "id": "glucose_iv",
+  "name": "葡萄糖补液",
+  "usable": true,
+  "tags": ["first_aid"],
+  "buff_refs": ["glucose_iv_drip"]
+}
+```
+
+### 事件端声明
+
+在 event_trigger JSON 中添加 `tags` 字段：
+
+```json
+{
+  "id": "hospitalization",
+  "name": "住院",
+  "tags": ["first_aid"],
+  "duration_s": 60,
+  "guaranteed": {
+    "buffs": ["hospitalized"]
+  }
+}
+```
+
+### 内置示例：濒死急救
+
+系统内置了一套完整的急救标签链路：
+
+| 组件 | 文件位置 | 说明 |
+|------|----------|------|
+| `dying` buff | `buff/status/dying.json` | HP 0-100 区间自动激活，声明 `restrict_*_tags: ["first_aid"]` |
+| `glucose_iv` item | `item/first_aid/first_aid_items.json` | 急救物品，`tags: ["first_aid"]`，给予 1000 tick 的补液 buff |
+| `hospitalization` trigger | `event_trigger/first_aid/first_aid_triggers.json` | 急救事件，`tags: ["first_aid"]`，60s 执行后给予 3600 tick 住院 buff |
+
+### Mod 中使用标签限制
+
+1. 在 mod 的 buff 中添加 `restrict_item_tags` / `restrict_trigger_tags`。
+2. 在对应的 item / event_trigger 中添加匹配的 `tags`。
+3. 确保 `tags` 中至少有一个值与 buff 的 restrict 列表匹配。
+4. 同一物品/事件可以有多个 tag，只需匹配其中一个即可通过限制。
+
+## 19. 常见错误排查
 
 ### 1) 百分比区间写成 0~1 导致不生效
 - 错误示例：`percent_min: 0.1, percent_max: 0.2`

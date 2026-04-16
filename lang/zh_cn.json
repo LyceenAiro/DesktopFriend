@@ -185,6 +185,9 @@
   "life.inventory.use_success": "已成功使用 {count} 个物品",
   "life.inventory.use_partial": "部分使用成功：成功 {ok}，失败 {fail}",
   "life.inventory.use_failed": "使用失败，请检查物品是否可用或数量是否足够",
+  "life.inventory.use_dead": "桌宠已死亡，无法使用该物品",
+  "life.inventory.use_tag_restricted": "桌宠处于濒死状态，仅可使用急救类物品",
+  "life.inventory.use_blocked_btn": "不可用",
   "life.inventory.info.name": "名称",
   "life.inventory.info.id": "ID",
   "life.inventory.info.category": "分类",
@@ -320,6 +323,8 @@
   "life.events.cooldown": "冷却",
   "life.events.mutex_blocked": "互斥锁定",
   "life.events.fire_failed": "事件触发失败",
+  "life.events.fire_dead": "桌宠已死亡，无法触发该事件",
+  "life.events.fire_tag_restricted": "桌宠处于濒死状态，仅可触发急救类事件",
   "life.events.fire_on_cooldown": "该事件还需要 {seconds} 秒才能再次触发",
   "life.events.fire_mutex_blocked": "该事件被互斥锁定（{trigger}冷却中）",
   "life.events.fire_missing_item": "背包中缺少所需物品：{item}，无法触发该事件",
@@ -406,5 +411,27 @@
   "life.outcome.library_card_registered.name": "办理成功",
   "life.outcome.library_card_registered.desc": "借阅证办理完成，{character_name}可以去图书馆自习了。",
   "life.outcome.library_quiet_focus.name": "静心专注",
-  "life.outcome.library_quiet_focus.desc": "图书馆安静的氛围让{character_name}迅速进入专注状态。"
+  "life.outcome.library_quiet_focus.desc": "图书馆安静的氛围让{character_name}迅速进入专注状态。",
+
+  "life.death.title": "桌宠已死亡",
+  "life.death.subtitle": "养成已结束",
+  "life.death.play_time": "养成时长：{time}",
+  "life.death.died_at": "死亡时间：{time}",
+  "life.death.reset_hint": "在设置 → 养成管理 中重置养成数据可以重新开始",
+
+  "settings.life.reset.dead_warn": "桌宠已死亡，养成功能已全部暂停。重置养成数据可让桌宠复活。",
+
+  "life.item_class.first_aid": "急救",
+  "life.buff_class.first_aid": "急救",
+  "life.trigger_class.first_aid": "急救",
+
+  "life.item.glucose_iv.name": "葡萄糖补液",
+  "life.item.glucose_iv.desc": "静脉输注葡萄糖溶液，持续补充水分与能量，是濒死状态下的急救物资。",
+  "life.buff.glucose_iv_drip.name": "葡萄糖输注",
+  "life.buff.glucose_iv_drip.desc": "正在输注葡萄糖补液，持续补充水分与饱腹感。",
+  "life.buff.hospitalized.name": "住院疗养",
+  "life.buff.hospitalized.desc": "正在住院接受治疗，全面恢复身体状态，并提升体质。",
+  "life.trigger.hospitalization.name": "住院",
+  "life.trigger.hospitalization.desc": "送往医院住院治疗，需要较长时间恢复，但能全面改善身体状况。",
+  "life.tag.first_aid": "急救"
 }

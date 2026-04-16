@@ -1,23 +1,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QProgressBar,
+    QSizePolicy, QVBoxLayout, QWidget,
+)
 
 from ui.setting.common import create_section_card
 from util.i18n import tr
-
-
-ATTR_KEYS = ("vit", "str", "spd", "agi", "spi", "int", "ill")
-
-_ATTR_ACCENT = {
-    "vit": "#d95f5f",
-    "str": "#d4834a",
-    "spd": "#c8b840",
-    "agi": "#5ab86c",
-    "spi": "#4ea8d8",
-    "int": "#8b6fd6",
-    "ill": "#888888",
-}
 
 
 class AttrHoverPopup(QFrame):
@@ -50,6 +40,9 @@ class AttrHoverPopup(QFrame):
         self.effect_label = QLabel()
         self.effect_label.setObjectName("detailLabel")
         panel_layout.addWidget(self.effect_label)
+        self.exp_label = QLabel()
+        self.exp_label.setObjectName("detailLabel")
+        panel_layout.addWidget(self.exp_label)
         outer.addWidget(self.panel)
         self.setStyleSheet(
             "QFrame#attrHoverPopupRoot { background: transparent; border: none; }"
@@ -59,12 +52,23 @@ class AttrHoverPopup(QFrame):
             "QLabel#detailLabel { color: #b9d7ee; font-size: 11px; background: transparent; border: none; }"
         )
 
-    def show_for(self, *, name, value, base, permanent_delta, effect_delta, global_pos):
+    def show_for(self, *, name, value, base, permanent_delta, effect_delta, exp, level, next_exp_required, global_pos):
         self.title_label.setText(name.upper())
         self.value_label.setText(tr("life.attrs.popup.total", value=f"{value:.0f}"))
         self.base_label.setText(tr("life.attrs.popup.base", value=f"{base:.0f}"))
         self.permanent_label.setText(tr("life.attrs.popup.permanent_delta", delta=f"{permanent_delta:+.0f}"))
         self.effect_label.setText(tr("life.attrs.popup.effect_delta", delta=f"{effect_delta:+.0f}"))
+        if next_exp_required is not None:
+            self.exp_label.setText(
+                tr("life.attrs.popup.exp_level", level=level, exp=f"{exp:.0f}", required=f"{next_exp_required:.0f}")
+            )
+            self.exp_label.setVisible(True)
+        else:
+            if level > 0:
+                self.exp_label.setText(tr("life.attrs.popup.max_level", level=level))
+                self.exp_label.setVisible(True)
+            else:
+                self.exp_label.setVisible(False)
         self.adjustSize()
         self.move(global_pos + QPoint(14, 18))
         self.show()
@@ -89,6 +93,9 @@ class AttrValueLabel(QLabel):
             base=float(self._data.get("base", 10.0)),
             permanent_delta=float(self._data.get("permanent_delta", 0.0)),
             effect_delta=float(self._data.get("effect_delta", 0.0)),
+            exp=float(self._data.get("exp", 0.0)),
+            level=int(self._data.get("level", 0)),
+            next_exp_required=self._data.get("next_exp_required"),
             global_pos=global_pos,
         )
 
@@ -111,55 +118,122 @@ class LifeAttrsTab(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._popup = AttrHoverPopup()
-        self.attr_value_labels = {}
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(14)
-        attrs_card = create_section_card(tr("life.attrs.card.title"), tr("life.attrs.card.desc"))
-        card_layout = attrs_card.layout()
-        tile_grid = QGridLayout()
-        tile_grid.setHorizontalSpacing(10)
-        tile_grid.setVerticalSpacing(10)
-        tile_grid.setColumnStretch(0, 1)
-        tile_grid.setColumnStretch(1, 1)
-        total = len(ATTR_KEYS)
-        for index, key in enumerate(ATTR_KEYS):
-            grid_row = index // 2
-            grid_col = index % 2
-            accent = _ATTR_ACCENT.get(key, "#666666")
-            tile = QFrame()
-            tile.setObjectName("attrTile")
-            tile.setStyleSheet(
-                "QFrame#attrTile { background-color: #161616; border: 1px solid #2e2e2e;"
-                " border-left: 3px solid " + accent + "; border-radius: 8px; }"
-            )
-            tile_layout = QVBoxLayout(tile)
-            tile_layout.setContentsMargins(14, 10, 14, 10)
-            tile_layout.setSpacing(3)
-            name_lbl = QLabel(tr(f"life.attr.{key}"))
-            name_lbl.setStyleSheet("color: #888888; font-size: 11px; background: transparent; border: none;")
-            tile_layout.addWidget(name_lbl)
-            value_lbl = AttrValueLabel(self._popup)
-            value_lbl.setText("0")
-            value_lbl.setStyleSheet(
-                "font-weight: 700; font-size: 20px; color: " + accent + "; background: transparent; border: none;"
-            )
-            tile_layout.addWidget(value_lbl)
-            if index == total - 1 and total % 2 == 1:
-                tile_grid.addWidget(tile, grid_row, 0, 1, 2)
-            else:
-                tile_grid.addWidget(tile, grid_row, grid_col)
-            self.attr_value_labels[key] = value_lbl
-        card_layout.addLayout(tile_grid)
-        layout.addWidget(attrs_card)
-        layout.addStretch()
+        self._attr_rows: dict = {}
+        self._current_attr_ids: list = []
 
-    def update_data(self, snapshot):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 16, 18, 16)
+        outer.setSpacing(14)
+
+        self._attrs_card = create_section_card(tr("life.attrs.card.title"), tr("life.attrs.card.desc"))
+        self._card_layout = self._attrs_card.layout()
+
+        self._list_widget = QWidget()
+        self._list_widget.setStyleSheet("background: transparent;")
+        self._list_layout = QVBoxLayout(self._list_widget)
+        self._list_layout.setContentsMargins(0, 0, 0, 0)
+        self._list_layout.setSpacing(8)
+        self._list_layout.addStretch()
+
+        self._card_layout.addWidget(self._list_widget)
+
+        outer.addWidget(self._attrs_card)
+
+    def _build_row(self, attr_id, name, color):
+        tile = QFrame()
+        tile.setObjectName("attrTile")
+        tile.setStyleSheet(
+            "QFrame#attrTile { background-color: #161616; border: 1px solid #2e2e2e;"
+            " border-left: 3px solid " + color + "; border-radius: 8px; }"
+        )
+        tile_outer = QVBoxLayout(tile)
+        tile_outer.setContentsMargins(14, 8, 14, 8)
+        tile_outer.setSpacing(4)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet("color: #888888; font-size: 12px; background: transparent; border: none;")
+        name_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        top_row.addWidget(name_lbl)
+
+        level_lbl = QLabel("")
+        level_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        level_lbl.setStyleSheet("color: #aaaaaa; font-size: 10px; background: transparent; border: none;")
+        level_lbl.setVisible(False)
+        top_row.addWidget(level_lbl)
+
+        value_lbl = AttrValueLabel(self._popup)
+        value_lbl.setText("0")
+        value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        value_lbl.setStyleSheet(
+            "font-weight: 700; font-size: 20px; color: " + color + "; background: transparent; border: none;"
+        )
+        top_row.addWidget(value_lbl)
+        tile_outer.addLayout(top_row)
+
+        exp_bar = QProgressBar()
+        exp_bar.setFixedHeight(4)
+        exp_bar.setTextVisible(False)
+        exp_bar.setRange(0, 1000)
+        exp_bar.setValue(0)
+        exp_bar.setVisible(False)
+        exp_bar.setStyleSheet(
+            "QProgressBar { background-color: #2e2e2e; border: none; border-radius: 2px; }"
+            "QProgressBar::chunk { background-color: " + color + "; border-radius: 2px; }"
+        )
+        tile_outer.addWidget(exp_bar)
+
+        return tile, name_lbl, value_lbl, level_lbl, exp_bar
+
+    def _rebuild_list(self, snapshot):
+        while self._list_layout.count() > 1:
+            item = self._list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._attr_rows.clear()
+        self._current_attr_ids = []
+
         for entry in snapshot:
             attr_id = str(entry.get("id", ""))
-            label = self.attr_value_labels.get(attr_id)
-            if label is None:
+            if not attr_id:
                 continue
+            name = str(entry.get("name", attr_id))
+            color = str(entry.get("color", "#666666"))
+            row = self._build_row(attr_id, name, color)
+            self._list_layout.insertWidget(self._list_layout.count() - 1, row[0])
+            self._attr_rows[attr_id] = row
+            self._current_attr_ids.append(attr_id)
+
+    def update_data(self, snapshot):
+        new_ids = [str(e.get("id", "")) for e in snapshot if e.get("id")]
+        if new_ids != self._current_attr_ids:
+            self._rebuild_list(snapshot)
+
+        for entry in snapshot:
+            attr_id = str(entry.get("id", ""))
+            row = self._attr_rows.get(attr_id)
+            if row is None:
+                continue
+            _tile, _name_lbl, value_lbl, level_lbl, exp_bar = row
+
             value = int(round(float(entry.get("value", 0.0))))
-            label.setText(str(value))
-            label.bind_data(entry)
+            value_lbl.setText(str(value))
+            value_lbl.bind_data(entry)
+
+            level = int(entry.get("level", 0))
+            next_exp = entry.get("next_exp_required")
+            if level > 0:
+                level_lbl.setText(f"Lv.{level}")
+                level_lbl.setVisible(True)
+            else:
+                level_lbl.setVisible(False)
+
+            if next_exp is not None and float(next_exp) > 0:
+                exp = float(entry.get("exp", 0.0))
+                ratio = min(1.0, exp / float(next_exp))
+                exp_bar.setValue(int(ratio * 1000))
+                exp_bar.setVisible(True)
+            else:
+                exp_bar.setVisible(False)

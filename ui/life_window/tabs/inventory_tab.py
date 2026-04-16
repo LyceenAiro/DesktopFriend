@@ -47,6 +47,8 @@ class LifeInventoryTab(QFrame):
         get_item_class_registry: Callable[[], dict[str, dict]],
         feedback_callback: Callable[[str, str], None],
         refresh_callback: Callable[[], None],
+        can_use_item_with_reason: Callable[[str], tuple[bool, str]] | None = None,
+        get_item_fail_message: Callable[[str, str], str | None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -59,6 +61,8 @@ class LifeInventoryTab(QFrame):
         self._get_item_class_registry = get_item_class_registry
         self._feedback_callback = feedback_callback
         self._refresh_callback = refresh_callback
+        self._can_use_item_with_reason = can_use_item_with_reason
+        self._get_item_fail_message = get_item_fail_message
         self._rows: list[QFrame] = []
         self._active_class: str | None = None  # None = 全部
         self._search_text: str = ""
@@ -106,9 +110,10 @@ class LifeInventoryTab(QFrame):
         layout.addWidget(inventory_card)
         layout.addStretch()
 
-    def update_data(self, items: list[dict], developer_mode: bool = False) -> None:
+    def update_data(self, items: list[dict], developer_mode: bool = False, tag_display_map: dict | None = None) -> None:
         self._items = list(items)
         self._developer_mode = bool(developer_mode)
+        self._tag_display_map = tag_display_map or {}
         self._rebuild_sub_tabs()
         self._rebuild_item_rows()
 
@@ -274,9 +279,23 @@ class LifeInventoryTab(QFrame):
         text_block = QVBoxLayout()
         text_block.setSpacing(3)
 
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
         title = QLabel(f"{item.get('name', item.get('id', 'unknown'))}  x{int(item.get('count', 0))}")
         title.setStyleSheet("font-weight: 700; color: #f3f3f3; background: transparent; border: none;")
-        text_block.addWidget(title)
+        title_row.addWidget(title)
+        for tag_id in item.get("tags", []):
+            tag_info = self._tag_display_map.get(tag_id)
+            if tag_info:
+                bubble = QLabel(tag_info["name"])
+                color = tag_info["color"]
+                bubble.setStyleSheet(
+                    f"background: {color}33; color: #ffffff; border: 1px solid {color}66; "
+                    "border-radius: 3px; padding: 0px 4px; font-size: 9px; font-weight: 600;"
+                )
+                title_row.addWidget(bubble)
+        title_row.addStretch()
+        text_block.addLayout(title_row)
 
         details: list[str] = []
         if self._developer_mode:
@@ -301,6 +320,17 @@ class LifeInventoryTab(QFrame):
         info_btn.clicked.connect(lambda: self._show_item_info(str(item.get("id", ""))))
         row_layout.addWidget(info_btn)
 
+        blocked_style = (
+            "QPushButton { background-color: #3a2020; color: #a06060; "
+            "border: 1px solid #6a3828; border-radius: 6px; }"
+            "QPushButton:hover { background-color: #4a2828; }"
+            "QPushButton:pressed { background-color: #2a1818; }"
+        )
+
+        can_use = bool(item.get("can_use", True))
+        block_reason = str(item.get("block_reason", ""))
+        is_restricted = not can_use and block_reason in ("dead", "tag_restricted")
+
         if on_cooldown:
             use_btn = QPushButton(tr("life.inventory.use_cooldown_btn"))
             use_btn.setFixedWidth(72)
@@ -311,6 +341,11 @@ class LifeInventoryTab(QFrame):
                 "QPushButton:hover { background-color: #5a4e28; }"
                 "QPushButton:pressed { background-color: #3a3018; }"
             )
+        elif is_restricted:
+            use_btn = QPushButton(tr("life.inventory.use_blocked_btn"))
+            use_btn.setFixedWidth(72)
+            use_btn.setFixedHeight(self._CONTROL_HEIGHT)
+            use_btn.setStyleSheet(blocked_style)
         else:
             use_btn = QPushButton(tr("life.inventory.use"))
             use_btn.setObjectName("primaryButton")
@@ -409,11 +444,30 @@ class LifeInventoryTab(QFrame):
         return lines
 
     def _use_one_item(self, item_id: str) -> None:
-        remaining = self._get_item_cooldown_remaining(item_id)
-        if remaining > 0:
-            secs = int(remaining) + 1
-            self._feedback_callback(tr("life.inventory.use_on_cooldown", seconds=secs), "warning")
-            return
+        if self._can_use_item_with_reason is not None:
+            can, reason = self._can_use_item_with_reason(item_id)
+            if not can:
+                if reason == "on_cooldown":
+                    remaining = self._get_item_cooldown_remaining(item_id)
+                    secs = int(remaining) + 1
+                    self._feedback_callback(tr("life.inventory.use_on_cooldown", seconds=secs), "warning")
+                elif reason == "dead":
+                    self._feedback_callback(tr("life.inventory.use_dead"), "warning")
+                elif reason == "tag_restricted":
+                    self._feedback_callback(tr("life.inventory.use_tag_restricted"), "warning")
+                else:
+                    custom_msg = None
+                    if self._get_item_fail_message is not None:
+                        custom_msg = self._get_item_fail_message(item_id, reason)
+                    self._feedback_callback(custom_msg or tr("life.inventory.use_failed"), "error")
+                self._refresh_callback()
+                return
+        else:
+            remaining = self._get_item_cooldown_remaining(item_id)
+            if remaining > 0:
+                secs = int(remaining) + 1
+                self._feedback_callback(tr("life.inventory.use_on_cooldown", seconds=secs), "warning")
+                return
         if self._use_item_with_count(item_id, 1, True):
             self._feedback_callback(tr("life.inventory.use_success", count=1), "success")
             self._refresh_callback()

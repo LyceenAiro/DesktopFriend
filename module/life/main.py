@@ -11,6 +11,7 @@ from util.log import _log
 from util.i18n import tr
 from module.life.schema import (
     ValidationIssue,
+    validate_attr_record,
     validate_buff_record,
     validate_item_record,
     validate_event_trigger_record,
@@ -48,6 +49,9 @@ class LifeProfile:
     attrs: dict[str, float] = field(default_factory=dict)
     inventory: dict[str, int] = field(default_factory=dict)
     active_effects: list[LifeEffect] = field(default_factory=list)
+    attr_exp: dict[str, float] = field(default_factory=dict)    # 每属性当前经验值
+    attr_level: dict[str, int] = field(default_factory=dict)   # 每属性当前等级
+    attr_base: dict[str, float] = field(default_factory=dict)  # 上次使用的 initial 基础值
 
 class LifeSystem:
     """0.3 draft implementation for life architecture.
@@ -65,6 +69,9 @@ class LifeSystem:
         nutrition_dir: str | Path = "module/life/nutrition",
         event_trigger_dir: str | Path = "module/life/event_trigger",
         event_outcome_dir: str | Path = "module/life/event_outcome",
+        passive_buff_dir: str | Path = "module/life/passive_buff",
+        attr_dir: str | Path = "module/life/attrs",
+        tag_dir: str | Path = "module/life/tags",
         store: LifeSqliteStore | None = None,
     ):
         self.buff_dir = Path(buff_dir)
@@ -73,12 +80,18 @@ class LifeSystem:
         self.nutrition_dir = Path(nutrition_dir)
         self.event_trigger_dir = Path(event_trigger_dir)
         self.event_outcome_dir = Path(event_outcome_dir)
+        self.passive_buff_dir = Path(passive_buff_dir)
+        self.attr_dir = Path(attr_dir)
+        self.tag_dir = Path(tag_dir)
         self.extra_buff_dirs: list[Path] = []
         self.extra_item_dirs: list[Path] = []
         self.extra_status_dirs: list[Path] = []
         self.extra_nutrition_dirs: list[Path] = []
         self.extra_event_trigger_dirs: list[Path] = []
         self.extra_event_outcome_dirs: list[Path] = []
+        self.extra_passive_buff_dirs: list[Path] = []
+        self.extra_attr_dirs: list[Path] = []
+        self.extra_tag_dirs: list[Path] = []
         self.store = store or LifeSqliteStore()
         self.character_name: str = ""  # 角色名称（由外部注入，如资源包 PACK_NAME）
         self.paused: bool = False  # 暂停时 tick 和物品使用均被冻结
@@ -87,16 +100,25 @@ class LifeSystem:
         self.item_registry: dict[str, dict[str, Any]] = {}
         self.event_trigger_registry: dict[str, dict[str, Any]] = {}
         self.event_outcome_registry: dict[str, dict[str, Any]] = {}
+        self.passive_buff_registry: dict[str, dict[str, Any]] = {}
+        self.tag_registry: dict[str, dict[str, Any]] = {}  # tag_id → {id, buff_id, i18n_key, color, name}
         self.attribute_rules: dict[str, list[dict[str, Any]]] = {}
         self.validation_issues: list[ValidationIssue] = []
+        self._pending_remove_ids: dict[str, set[str]] = {}  # registry_type → set of ids to remove
         self._static_cap_modifiers: list[tuple[str, str, Any]] = []
         self._item_cooldowns: dict[str, float] = {}  # item_id → 可用时间戳 (time.time())
         self._trigger_cooldowns: dict[str, float] = {}  # trigger_id → 可用时间戳
         self._trigger_executing: dict[str, float] = {}  # trigger_id → 完成时间戳 (正在执行中)
         self._completed_trigger_results: list[dict[str, Any]] = []  # 执行完成事件队列（供 UI 消费）
 
+        # 死亡系统
+        self.is_dead: bool = False
+        self._death_summary: dict[str, Any] | None = None
+        self._life_started_at: float = time.time()
+
         self.state_definitions: dict[str, dict[str, Any]] = self._load_state_definitions()
         self.nutrition_definitions: dict[str, dict[str, Any]] = self._load_nutrition_definitions()
+        self.attr_definitions: dict[str, dict[str, Any]] = self._load_attr_definitions()
 
         self._attr_cap_bonus_max: dict[str, float] = {k: 0.0 for k in self.state_keys}
         self._attr_cap_bonus_min: dict[str, float] = {k: 0.0 for k in self.state_keys}
@@ -136,20 +158,30 @@ class LifeSystem:
     def nutrition_keys(self) -> tuple[str, ...]:
         return tuple(self.nutrition_definitions.keys())
 
+    @property
+    def attr_keys(self) -> tuple[str, ...]:
+        return tuple(self.attr_definitions.keys()) if self.attr_definitions else BASE_ATTRS
+
     def get_state_definitions(self) -> list[dict[str, Any]]:
         return [dict(v) for v in self.state_definitions.values()]
 
     def get_nutrition_definitions(self) -> list[dict[str, Any]]:
         return [dict(v) for v in self.nutrition_definitions.values()]
 
+    def get_attr_definitions(self) -> list[dict[str, Any]]:
+        return [dict(v) for v in self.attr_definitions.values()]
+
     def _create_default_profile(self) -> LifeProfile:
         states = {key: float(defn["default"]) for key, defn in self.state_definitions.items()}
         state_max = {key: float(defn["max"]) for key, defn in self.state_definitions.items()}
         state_min = {key: float(defn["min"]) for key, defn in self.state_definitions.items()}
         nutrition = {key: float(defn["default"]) for key, defn in self.nutrition_definitions.items()}
-        attrs = {k: 10.0 for k in BASE_ATTRS}
+        attrs = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {k: 10.0 for k in BASE_ATTRS}
+        attr_exp = {k: 0.0 for k in (self.attr_definitions.keys() if self.attr_definitions else BASE_ATTRS)}
+        attr_level = {k: 0 for k in (self.attr_definitions.keys() if self.attr_definitions else BASE_ATTRS)}
+        attr_base = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {k: 10.0 for k in BASE_ATTRS}
         inventory = self._load_starter_inventory()
-        return LifeProfile(states=states, state_max=state_max, state_min=state_min, nutrition=nutrition, attrs=attrs, inventory=inventory)
+        return LifeProfile(states=states, state_max=state_max, state_min=state_min, nutrition=nutrition, attrs=attrs, inventory=inventory, attr_exp=attr_exp, attr_level=attr_level, attr_base=attr_base)
 
     def _load_starter_inventory(self) -> dict[str, int]:
         result: dict[str, int] = {}
@@ -177,20 +209,23 @@ class LifeSystem:
         _log.INFO("[Life][Register]开始重载注册表")
         next_state_defs = self._load_state_definitions()
         next_nutrition_defs = self._load_nutrition_definitions()
+        next_attr_defs = self._load_attr_definitions()
         self._sync_profile_states(next_state_defs)
         self._sync_profile_nutrition(next_nutrition_defs)
+        self._sync_profile_attrs(next_attr_defs)
+        self.attr_definitions = next_attr_defs
 
         self.buff_registry, buff_issues = self._load_registry_dir(
             self._iter_buff_dirs(),
             "buff",
             state_keys=self.state_keys,
-            attr_keys=BASE_ATTRS,
+            attr_keys=self.attr_keys,
             nutrition_keys=self.nutrition_keys,
         )
         self.item_registry, item_issues = self._load_item_registry(
             self._iter_item_dirs(),
             state_keys=self.state_keys,
-            attr_keys=BASE_ATTRS,
+            attr_keys=self.attr_keys,
             nutrition_keys=self.nutrition_keys,
         )
         self.event_trigger_registry, trigger_issues = self._load_event_registry(
@@ -199,19 +234,102 @@ class LifeSystem:
         self.event_outcome_registry, outcome_issues = self._load_event_registry(
             self._iter_event_outcome_dirs(), "event_outcome"
         )
-        self.validation_issues = buff_issues + item_issues + trigger_issues + outcome_issues
+        self.passive_buff_registry, passive_issues = self._load_passive_buff_registry(
+            self._iter_passive_buff_dirs()
+        )
+        self.tag_registry = self._load_tag_registry(self._iter_tag_dirs())
+        self.validation_issues = buff_issues + item_issues + trigger_issues + outcome_issues + passive_issues
         self.attribute_rules = self._load_attribute_rules(self.buff_registry)
         self._refresh_attr_range_effects()
         self._sync_managed_nutrition_buffs()
         self._sync_managed_state_buffs()
+        self._apply_pending_remove_ids()
         self._refresh_attr_range_effects()
         self._report_validation_issues()
         _log.INFO(
             "[Life]注册完成 "
             f"status={len(self.state_definitions)} nutrition={len(self.nutrition_definitions)} "
+            f"attr={len(self.attr_definitions)} "
             f"buff={len(self.buff_registry)} item={len(self.item_registry)} "
-            f"trigger={len(self.event_trigger_registry)} outcome={len(self.event_outcome_registry)}"
+            f"trigger={len(self.event_trigger_registry)} outcome={len(self.event_outcome_registry)} "
+            f"passive_buff={len(self.passive_buff_registry)} tag={len(self.tag_registry)}"
         )
+
+    def add_remove_ids(self, remove_dict: dict[str, list[str]]) -> None:
+        """从 mod 的 remove_ids 配置中累积要删除的注册表条目。"""
+        if not isinstance(remove_dict, dict):
+            return
+        for registry_type, id_list in remove_dict.items():
+            rtype = str(registry_type).strip()
+            if not rtype or not isinstance(id_list, list):
+                continue
+            target = self._pending_remove_ids.setdefault(rtype, set())
+            for rid in id_list:
+                rid_str = str(rid).strip()
+                if rid_str:
+                    target.add(rid_str)
+
+    def clear_remove_ids(self) -> None:
+        """清空待删除列表（mod 卸载后重置时调用）。"""
+        self._pending_remove_ids.clear()
+
+    def _apply_pending_remove_ids(self) -> None:
+        """在 reload_registries 末尾应用所有待删除条目。"""
+        if not self._pending_remove_ids:
+            return
+
+        _REGISTRY_MAP: dict[str, dict[str, Any]] = {
+            "buff": self.buff_registry,
+            "item": self.item_registry,
+            "event_trigger": self.event_trigger_registry,
+            "event_outcome": self.event_outcome_registry,
+            "passive_buff": self.passive_buff_registry,
+        }
+
+        total_removed = 0
+        for registry_type, ids_to_remove in self._pending_remove_ids.items():
+            registry = _REGISTRY_MAP.get(registry_type)
+            if registry is not None:
+                for rid in ids_to_remove:
+                    if rid in registry:
+                        registry.pop(rid)
+                        total_removed += 1
+                        _log.DEBUG(f"[Life][remove_ids]{registry_type}/{rid} 已移除")
+                continue
+
+            # status / nutrition / attrs 使用 definitions 字典
+            if registry_type == "status":
+                for rid in ids_to_remove:
+                    if rid in self.state_definitions:
+                        self.state_definitions.pop(rid)
+                        # 同步清理 managed buff 中依赖该状态的效果
+                        self.profile.active_effects = [
+                            e for e in self.profile.active_effects
+                            if not (e.managed and e.source == f"state:{rid}")
+                        ]
+                        total_removed += 1
+                        _log.DEBUG(f"[Life][remove_ids]status/{rid} 已移除")
+            elif registry_type == "nutrition":
+                for rid in ids_to_remove:
+                    if rid in self.nutrition_definitions:
+                        self.nutrition_definitions.pop(rid)
+                        self.profile.nutrition.pop(rid, None)
+                        # 清理依赖该营养的 managed buff
+                        self.profile.active_effects = [
+                            e for e in self.profile.active_effects
+                            if not (e.managed and e.source == f"nutrition:{rid}")
+                        ]
+                        total_removed += 1
+                        _log.DEBUG(f"[Life][remove_ids]nutrition/{rid} 已移除")
+            elif registry_type == "attrs":
+                for rid in ids_to_remove:
+                    if rid in self.attr_definitions:
+                        self.attr_definitions.pop(rid)
+                        total_removed += 1
+                        _log.DEBUG(f"[Life][remove_ids]attrs/{rid} 已移除")
+
+        if total_removed:
+            _log.INFO(f"[Life][remove_ids]共移除 {total_removed} 个条目")
 
     def _append_unique_path(self, target: list[Path], path_like: str | Path) -> bool:
         path = Path(path_like)
@@ -245,6 +363,15 @@ class LifeSystem:
     def _iter_event_outcome_dirs(self) -> list[Path]:
         return [self.event_outcome_dir, *self.extra_event_outcome_dirs]
 
+    def _iter_passive_buff_dirs(self) -> list[Path]:
+        return [self.passive_buff_dir, *self.extra_passive_buff_dirs]
+
+    def _iter_attr_dirs(self) -> list[Path]:
+        return [self.attr_dir, *self.extra_attr_dirs]
+
+    def _iter_tag_dirs(self) -> list[Path]:
+        return [self.tag_dir, *self.extra_tag_dirs]
+
     def attach_mod_resource_dirs(
         self,
         *,
@@ -254,6 +381,8 @@ class LifeSystem:
         nutrition_dir: str | Path | None = None,
         event_trigger_dir: str | Path | None = None,
         event_outcome_dir: str | Path | None = None,
+        passive_buff_dir: str | Path | None = None,
+        attr_dir: str | Path | None = None,
         reload: bool = True,
     ) -> None:
         changed = False
@@ -269,6 +398,10 @@ class LifeSystem:
             changed = self._append_unique_path(self.extra_event_trigger_dirs, event_trigger_dir) or changed
         if event_outcome_dir is not None:
             changed = self._append_unique_path(self.extra_event_outcome_dirs, event_outcome_dir) or changed
+        if passive_buff_dir is not None:
+            changed = self._append_unique_path(self.extra_passive_buff_dirs, passive_buff_dir) or changed
+        if attr_dir is not None:
+            changed = self._append_unique_path(self.extra_attr_dirs, attr_dir) or changed
         if changed and reload:
             self.reload_registries()
 
@@ -281,6 +414,8 @@ class LifeSystem:
         nutrition_dir: str | Path | None = None,
         event_trigger_dir: str | Path | None = None,
         event_outcome_dir: str | Path | None = None,
+        passive_buff_dir: str | Path | None = None,
+        attr_dir: str | Path | None = None,
         reload: bool = True,
     ) -> None:
         changed = False
@@ -296,10 +431,142 @@ class LifeSystem:
             changed = self._remove_path(self.extra_event_trigger_dirs, event_trigger_dir) or changed
         if event_outcome_dir is not None:
             changed = self._remove_path(self.extra_event_outcome_dirs, event_outcome_dir) or changed
+        if passive_buff_dir is not None:
+            changed = self._remove_path(self.extra_passive_buff_dirs, passive_buff_dir) or changed
+        if attr_dir is not None:
+            changed = self._remove_path(self.extra_attr_dirs, attr_dir) or changed
         if changed and reload:
             self.reload_registries()
 
     def _build_default_state_definitions(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for index, state_id in enumerate(BASE_STATES):
+            result[state_id] = {
+                "id": state_id,
+                "name": state_id,
+                "i18n_key": f"life.state.{state_id}",
+                "default": 100.0,
+                "min": 0.0,
+                "max": GLOBAL_VALUE_MAX,
+                "order": index,
+            }
+        return result
+
+    def _build_default_attr_definitions(self) -> dict[str, dict[str, Any]]:
+        _FALLBACK_COLORS = {
+            "vit": "#e06c75", "str": "#d4834a", "spd": "#c8b840",
+            "agi": "#5ab86c", "spi": "#4ea8d8", "int": "#8b6fd6", "ill": "#888888",
+        }
+        result: dict[str, dict[str, Any]] = {}
+        for index, attr_id in enumerate(BASE_ATTRS):
+            result[attr_id] = {
+                "id": attr_id,
+                "name": attr_id,
+                "i18n_key": f"life.attr.{attr_id}",
+                "color": _FALLBACK_COLORS.get(attr_id, "#666666"),
+                "initial": 10.0,
+                "order": (index + 1) * 10,
+            }
+        return result
+
+    def _load_attr_definitions(self) -> dict[str, dict[str, Any]]:
+        loaded: list[dict[str, Any]] = []
+        scanned_dirs = 0
+        scanned_files = 0
+        for directory in self._iter_attr_dirs():
+            if not directory.exists():
+                continue
+            scanned_dirs += 1
+            for file_path in sorted(directory.rglob("*.json")):
+                scanned_files += 1
+                payload = self._read_json(file_path)
+                if isinstance(payload, dict) and "id" in payload:
+                    loaded.append(payload)
+                elif isinstance(payload, list):
+                    loaded.extend([r for r in payload if isinstance(r, dict)])
+
+        if not loaded:
+            _log.WARN(
+                f"[Life][Register][Attr]未发现属性定义，使用默认属性。"
+                f"dirs={scanned_dirs} files={scanned_files} default={len(BASE_ATTRS)}"
+            )
+            return self._build_default_attr_definitions()
+
+        issues: list[ValidationIssue] = []
+        normalized: list[dict[str, Any]] = []
+        _FALLBACK_COLORS = {
+            "vit": "#e06c75", "str": "#d4834a", "spd": "#c8b840",
+            "agi": "#5ab86c", "spi": "#4ea8d8", "int": "#8b6fd6", "ill": "#888888",
+        }
+        for index, record in enumerate(loaded):
+            issues.extend(validate_attr_record(record, "attrs_dir"))
+            attr_id = str(record.get("id") or "").strip()
+            if not attr_id:
+                continue
+            initial = self._to_float_safe(record.get("initial", 10.0), 10.0)
+            color = str(record.get("color") or _FALLBACK_COLORS.get(attr_id, "#666666"))
+            name = str(record.get("name") or attr_id)
+            i18n_key = str(record.get("i18n_key") or f"life.attr.{attr_id}")
+            order_raw = record.get("order", index)
+            try:
+                order = int(order_raw)
+            except Exception:
+                order = index
+            # level_table 经验/等级表（可选）
+            level_table_raw = record.get("level_table")
+            level_table: list[dict[str, Any]] = []
+            if isinstance(level_table_raw, list):
+                for lt_entry in level_table_raw:
+                    if not isinstance(lt_entry, dict):
+                        continue
+                    try:
+                        lv = int(lt_entry["level"])
+                        exp_req = float(lt_entry["exp_required"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    bonus = dict(lt_entry["permanent_bonus"]) if isinstance(lt_entry.get("permanent_bonus"), dict) else {}
+                    level_table.append({"level": lv, "exp_required": exp_req, "permanent_bonus": bonus})
+                level_table.sort(key=lambda e: e["level"])
+            normalized.append({"id": attr_id, "name": name, "i18n_key": i18n_key,
+                                "color": color, "initial": initial, "order": order,
+                                "level_table": level_table})
+
+        if not normalized:
+            return self._build_default_attr_definitions()
+
+        normalized.sort(key=lambda item: (int(item.get("order", 0)), str(item.get("id", ""))))
+        result: dict[str, dict[str, Any]] = {}
+        for item in normalized:
+            attr_id = str(item["id"])
+            if attr_id in result:
+                _log.WARN(f"[Life][Register][Attr]重复属性ID，后者覆盖前者: {attr_id}")
+            result[attr_id] = item
+        _log.INFO(
+            f"[Life][Register][Attr]dirs={scanned_dirs} files={scanned_files} records={len(result)}"
+        )
+        return result
+
+    def _sync_profile_attrs(self, next_defs: dict[str, dict[str, Any]]) -> None:
+        """新增属性添加默认值；已有属性检测 initial 变化并同步差值；已废弃属性保留。"""
+        for attr_id, defn in next_defs.items():
+            new_initial = float(defn.get("initial", 10.0))
+            if attr_id not in self.profile.attrs:
+                # 全新属性
+                self.profile.attrs[attr_id] = new_initial
+                self.profile.attr_base[attr_id] = new_initial
+            else:
+                # 已有属性：检测 initial 变化
+                old_initial = self.profile.attr_base.get(attr_id, new_initial)
+                if abs(new_initial - old_initial) > 1e-9:
+                    delta = new_initial - old_initial
+                    self.profile.attrs[attr_id] += delta
+                    self.profile.attr_base[attr_id] = new_initial
+                elif attr_id not in self.profile.attr_base:
+                    self.profile.attr_base[attr_id] = new_initial
+            if attr_id not in self.profile.attr_exp:
+                self.profile.attr_exp[attr_id] = 0.0
+            if attr_id not in self.profile.attr_level:
+                self.profile.attr_level[attr_id] = 0
         result: dict[str, dict[str, Any]] = {}
         for index, state_id in enumerate(BASE_STATES):
             result[state_id] = {
@@ -375,6 +642,10 @@ class LifeSystem:
                     }
                     if buff_id is not None:
                         entry["buff_id"] = str(buff_id)
+                    # 保留条件字段（requires_buff / requires_no_buff）
+                    for cond_key in ("requires_buff", "requires_no_buff"):
+                        if cond_key in effect:
+                            entry[cond_key] = effect[cond_key]
                     effects.append(entry)
 
             normalized.append(
@@ -464,6 +735,10 @@ class LifeSystem:
                     }
                     if buff_id is not None:
                         entry["buff_id"] = str(buff_id)
+                    # 保留条件字段（requires_buff / requires_no_buff）
+                    for cond_key in ("requires_buff", "requires_no_buff"):
+                        if cond_key in effect:
+                            entry[cond_key] = effect[cond_key]
                     effects.append(entry)
 
             normalized.append(
@@ -881,6 +1156,88 @@ class LifeSystem:
         )
         return registry, issues
 
+    def _load_passive_buff_registry(
+        self,
+        directories: list[Path],
+    ) -> tuple[dict[str, dict[str, Any]], list[ValidationIssue]]:
+        from module.life.schema import validate_passive_buff_record  # 避免循环导入风险
+        registry: dict[str, dict[str, Any]] = {}
+        issues: list[ValidationIssue] = []
+        scanned_dirs = 0
+        scanned_files = 0
+        duplicate_count = 0
+        for directory in directories:
+            if not directory.exists():
+                continue
+            scanned_dirs += 1
+            for file_path in sorted(directory.rglob("*.json")):
+                scanned_files += 1
+                payload = self._read_json(file_path)
+                if not payload:
+                    continue
+                records: list[dict[str, Any]]
+                if isinstance(payload, list):
+                    records = [r for r in payload if isinstance(r, dict)]
+                elif isinstance(payload, dict):
+                    if "id" in payload:
+                        records = [payload]
+                    else:
+                        records = [v for v in payload.values() if isinstance(v, dict)]
+                else:
+                    continue
+                for record in records:
+                    record_id = str(record.get("id") or "").strip()
+                    if not record_id:
+                        continue
+                    issues.extend(validate_passive_buff_record(record, str(file_path)))
+                    if record_id in registry:
+                        duplicate_count += 1
+                        _log.WARN(f"[Life][Register][passive_buff]重复ID，后者覆盖前者: {record_id} file={file_path}")
+                    registry[record_id] = record
+        _log.INFO(
+            f"[Life][Register][passive_buff]dirs={scanned_dirs} files={scanned_files} "
+            f"records={len(registry)} issues={len(issues)} duplicates={duplicate_count}"
+        )
+        return registry, issues
+
+    def _load_tag_registry(self, directories: list[Path]) -> dict[str, dict[str, Any]]:
+        """加载标签注册表。标签定义了 tag_id → buff_id 的映射关系。"""
+        registry: dict[str, dict[str, Any]] = {}
+        scanned_dirs = 0
+        scanned_files = 0
+        for directory in directories:
+            if not directory.exists():
+                continue
+            scanned_dirs += 1
+            for file_path in sorted(directory.rglob("*.json")):
+                scanned_files += 1
+                payload = self._read_json(file_path)
+                if not payload:
+                    continue
+                records: list[dict[str, Any]]
+                if isinstance(payload, list):
+                    records = [r for r in payload if isinstance(r, dict)]
+                elif isinstance(payload, dict):
+                    if "id" in payload:
+                        records = [payload]
+                    else:
+                        records = [v for v in payload.values() if isinstance(v, dict)]
+                else:
+                    continue
+                for record in records:
+                    tag_id = str(record.get("id") or "").strip()
+                    if not tag_id:
+                        continue
+                    buff_id = str(record.get("buff_id") or "").strip()
+                    if not buff_id:
+                        _log.WARN(f"[Life][Register][tag]标签缺少 buff_id: {tag_id} file={file_path}")
+                        continue
+                    if tag_id in registry:
+                        _log.WARN(f"[Life][Register][tag]重复ID，后者覆盖前者: {tag_id} file={file_path}")
+                    registry[tag_id] = record
+        _log.INFO(f"[Life][Register][tag]dirs={scanned_dirs} files={scanned_files} records={len(registry)}")
+        return registry
+
     def _resolve_event_classes(self, file_path: Path, root: Path) -> list[str]:
         """从事件触发器文件所在目录向上查找最近的 class.json。"""
         current = file_path.parent
@@ -1023,6 +1380,7 @@ class LifeSystem:
         for item_id, count in sorted(self.profile.inventory.items()):
             item_info = self.item_registry.get(item_id, {})
             cooldown_remaining = self.get_item_cooldown_remaining(item_id)
+            can, reason = self.can_use_item_with_reason(item_id)
             snapshot.append(
                 {
                     "id": item_id,
@@ -1034,20 +1392,80 @@ class LifeSystem:
                     "count": int(count),
                     "cooldown_remaining": cooldown_remaining,
                     "on_cooldown": cooldown_remaining > 0,
+                    "can_use": can,
+                    "block_reason": reason,
+                    "tags": list(item_info.get("tags") or []),
                 }
             )
         return snapshot
 
-    def can_use_item(self, item_id: str) -> bool:
+    def can_use_item_with_reason(self, item_id: str) -> tuple[bool, str]:
+        """检查物品是否可用，返回 (可否, 原因代码)。
+        原因代码：not_found | not_usable | dead | on_cooldown | missing_buff:{id} | has_buff:{id} | tag_restricted
+        """
         item = self.item_registry.get(item_id)
         if not item:
-            return False
+            return False, "not_found"
+        if self.is_dead:
+            classes = item.get("classes", [])
+            if not isinstance(classes, list) or "emergency" not in classes:
+                return False, "dead"
         if not bool(item.get("usable", True)):
-            return False
+            return False, "not_usable"
         ready_at = self._item_cooldowns.get(item_id)
         if ready_at is not None and time.time() < ready_at:
-            return False
-        return True
+            return False, "on_cooldown"
+
+        # requires_buff / requires_no_buff 条件
+        active_ids = {e.effect_id for e in self.profile.active_effects}
+        rb = item.get("requires_buff")
+        if rb is not None:
+            check_ids = [rb] if isinstance(rb, str) else list(rb)
+            for bid in check_ids:
+                bid = str(bid).strip()
+                if bid and bid not in active_ids:
+                    return False, f"missing_buff:{bid}"
+        rnb = item.get("requires_no_buff")
+        if rnb is not None:
+            check_ids = [rnb] if isinstance(rnb, str) else list(rnb)
+            for bid in check_ids:
+                bid = str(bid).strip()
+                if bid and bid in active_ids:
+                    return False, f"has_buff:{bid}"
+
+        # 检查标签注册表的限制：若标签关联的 buff 处于活跃状态，物品必须拥有该标签
+        item_tags: set[str] = set(item.get("tags") or [])
+        active_ids = active_ids if active_ids else {e.effect_id for e in self.profile.active_effects}
+        for tag_id, tag_def in self.tag_registry.items():
+            linked_buff = str(tag_def.get("buff_id") or "").strip()
+            if linked_buff and linked_buff in active_ids:
+                if tag_id not in item_tags:
+                    return False, "tag_restricted"
+
+        return True, ""
+
+    def can_use_item(self, item_id: str) -> bool:
+        can, _ = self.can_use_item_with_reason(item_id)
+        return can
+
+    def get_item_fail_message(self, item_id: str, reason: str) -> str | None:
+        """从物品 json 的 fail_messages 中查找对应原因的自定义文本，支持前缀通配匹配。"""
+        item = self.item_registry.get(item_id)
+        if not item:
+            return None
+        fail_messages = item.get("fail_messages")
+        if not isinstance(fail_messages, dict):
+            return None
+        if reason in fail_messages:
+            return str(fail_messages[reason])
+        colon_idx = reason.find(":")
+        if colon_idx >= 0:
+            prefix = reason[:colon_idx]
+            if f"{prefix}:*" in fail_messages:
+                return str(fail_messages[f"{prefix}:*"])
+            if prefix in fail_messages:
+                return str(fail_messages[prefix])
+        return None
 
     def get_item_cooldown_remaining(self, item_id: str) -> float:
         """返回物品剩余冷却秒数（0 表示已可使用）。"""
@@ -1211,6 +1629,13 @@ class LifeSystem:
 
         self._apply_nutrition_record(record)
 
+        # attr_exp：属性经验收益
+        attr_exp_field = record.get("attr_exp")
+        if isinstance(attr_exp_field, dict):
+            levelups = self._apply_attr_exp_delta(attr_exp_field)
+            if levelups:
+                self._completed_trigger_results.extend(levelups)
+
         # buff_refs: 引用其他 buff 的 ID，使用时直接套用对应 buff 的完整效果
         buff_refs = record.get("buff_refs", [])
         if isinstance(buff_refs, list):
@@ -1268,6 +1693,20 @@ class LifeSystem:
             )
         elif cap_modifiers:
             self._apply_cap_modifiers(cap_modifiers)
+        elif any(str(t.get("buff_id") or "") == record_id for t in self.tag_registry.values()):
+            # 标签监控的 buff：无定时效果，以 managed 模式注册为标记效果
+            self._register_effect(
+                LifeEffect(
+                    effect_id=record_id,
+                    effect_name=record_name,
+                    effect_desc=record_desc,
+                    source=source,
+                    per_tick={},
+                    remaining_ticks=1,
+                    stack_rule="noadd",
+                    managed=True,
+                )
+            )
 
         self._refresh_attr_range_effects()
 
@@ -1362,7 +1801,78 @@ class LifeSystem:
         self.tick_triggers()
         self._sync_managed_nutrition_buffs()
         self._sync_managed_state_buffs()
+        self._tick_passive_buffs()
         self._refresh_attr_range_effects()
+
+        # 死亡检测：hp ≤ 0 且当前不处于死亡状态
+        if not self.is_dead and "hp" in self.profile.states:
+            if self.profile.states["hp"] <= 0:
+                self._trigger_death()
+
+    def _tick_passive_buffs(self) -> None:
+        """每 tick 检测被动 buff 触发条件，按概率随机激活。"""
+        if not self.passive_buff_registry:
+            return
+        active_ids = {e.effect_id for e in self.profile.active_effects}
+        for pb_id, record in self.passive_buff_registry.items():
+            # requires_buff 条件（列表中任意一个存在即满足）
+            rb = record.get("requires_buff")
+            if rb is not None:
+                check_ids = [rb] if isinstance(rb, str) else list(rb)
+                if not any(str(bid) in active_ids for bid in check_ids if bid):
+                    continue
+            # requires_no_buff 条件（列表中任意一个存在则跳过）
+            rnb = record.get("requires_no_buff")
+            if rnb is not None:
+                check_ids = [rnb] if isinstance(rnb, str) else list(rnb)
+                if any(str(bid) in active_ids for bid in check_ids if bid):
+                    continue
+            # attr_conditions 条件（全部满足才继续）
+            attr_conds = record.get("attr_conditions")
+            if isinstance(attr_conds, list):
+                cond_ok = True
+                for cond in attr_conds:
+                    if not isinstance(cond, dict):
+                        continue
+                    attr_key = str(cond.get("attr") or "").strip()
+                    if not attr_key:
+                        continue
+                    attr_val = self.profile.attrs.get(attr_key, 0.0)
+                    cond_min = cond.get("min")
+                    cond_max = cond.get("max")
+                    if cond_min is not None and attr_val < float(cond_min):
+                        cond_ok = False
+                        break
+                    if cond_max is not None and attr_val > float(cond_max):
+                        cond_ok = False
+                        break
+                if not cond_ok:
+                    continue
+            # 计算有效触发概率（基础概率 + 属性加成）
+            base_chance = float(record.get("base_chance", 0.0))
+            attr_bonus_map = record.get("attr_bonus")
+            bonus = 0.0
+            if isinstance(attr_bonus_map, dict):
+                for attr_key, bonus_per_point in attr_bonus_map.items():
+                    attr_val = self.profile.attrs.get(str(attr_key), 0.0)
+                    try:
+                        bonus += float(attr_val) * float(bonus_per_point)
+                    except Exception:
+                        pass
+            effective_chance = max(0.0, base_chance + bonus)
+            if effective_chance <= 0.0:
+                continue
+            # 随机触发
+            if random.random() * 100.0 < effective_chance:
+                on_trigger = record.get("on_trigger")
+                if isinstance(on_trigger, dict):
+                    buff_id = str(on_trigger.get("buff_id") or "").strip()
+                    if buff_id:
+                        self.apply_buff(buff_id)
+                    else:
+                        # on_trigger 本身作为 buff-like 记录直接应用（即时状态/营养效果）
+                        self._apply_record(on_trigger, source="passive_buff")
+                _log.DEBUG(f"[Life][passive_buff]触发: {pb_id}")
 
     def _refresh_attr_range_effects(self) -> None:
         max_caps = {
@@ -1513,6 +2023,40 @@ class LifeSystem:
                 breakdown[state]["tick_delta"] = float(delta)
         self._state_runtime_breakdown = breakdown
 
+    def _trigger_death(self) -> None:
+        """处理桌宠死亡：暂停 tick、记录死亡摘要。"""
+        if self.is_dead:
+            return
+        self.is_dead = True
+        self.paused = True
+        self._death_summary = {
+            "died_at": time.time(),
+            "life_started_at": self._life_started_at,
+            "play_time_s": round(time.time() - self._life_started_at),
+            "final_states": dict(self.profile.states),
+            "final_attrs": dict(self.profile.attrs),
+        }
+        _log.INFO("[Life]桌宠已死亡")
+
+    def get_death_summary(self) -> dict[str, Any]:
+        """返回死亡摘要信息；桌宠存活时返回空字典。"""
+        if self._death_summary is None:
+            return {}
+        return dict(self._death_summary)
+
+    def revive(self) -> bool:
+        """尝试复活桌宠（仅当 hp > 0 时成功）。成功返回 True，否则返回 False。"""
+        hp = float(self.profile.states.get("hp", 0.0))
+        if hp <= 0:
+            _log.WARN("[Life]无法复活：HP 仍为 0")
+            return False
+        self.is_dead = False
+        self.paused = False
+        self._death_summary = None
+        _log.INFO("[Life]桌宠已复活")
+        return True
+
+
     def _parse_percent_value(self, value: Any) -> float | None:
         if isinstance(value, str):
             text = value.strip()
@@ -1643,6 +2187,9 @@ class LifeSystem:
 
             for effect_def in definition.get("effects", []):
                 in_range = self._threshold_effect_in_range(effect_def, current, base_max)
+                # 额外的 buff 条件检查
+                if in_range:
+                    in_range = self._effect_conditions_met(effect_def)
                 buff_id = effect_def.get("buff_id")
 
                 if buff_id:
@@ -1655,13 +2202,17 @@ class LifeSystem:
                     if in_range and existing is None:
                         buff_record = self.buff_registry.get(str(buff_id))
                         if buff_record:
-                            self._apply_managed_buff(buff_record, source=source_tag)
+                            if buff_record.get("consume_self"):
+                                # 自消耗 buff：仅执行即时效果，不注册为持续 managed buff
+                                self._apply_record(buff_record, source=source_tag)
+                            else:
+                                self._apply_managed_buff(buff_record, source=source_tag)
                     elif not in_range and existing is not None:
                         self._revert_effect_attr_modifiers(existing)
                         self.profile.active_effects.remove(existing)
                 else:
                     # 旧方式（向下兼容）：直接每 tick 改变状态值
-                    if not self._threshold_effect_in_range(effect_def, current, float(definition.get("max", 100.0))):
+                    if not in_range:
                         continue
                     for state, delta in dict(effect_def.get("states", {})).items():
                         self._change_state(str(state), float(delta))
@@ -1682,6 +2233,28 @@ class LifeSystem:
         max_v = float(effect_def.get("max", float("inf")))
         return min_v <= current < max_v
 
+    def _effect_conditions_met(self, effect_def: dict[str, Any]) -> bool:
+        """检查 effect_def 的 requires_buff / requires_no_buff 条件是否满足。"""
+        active_ids = {e.effect_id for e in self.profile.active_effects}
+
+        requires_buff = effect_def.get("requires_buff")
+        if requires_buff is not None:
+            check_ids = [requires_buff] if isinstance(requires_buff, str) else list(requires_buff)
+            for bid in check_ids:
+                bid = str(bid).strip()
+                if bid and bid not in active_ids:
+                    return False
+
+        requires_no_buff = effect_def.get("requires_no_buff")
+        if requires_no_buff is not None:
+            check_ids = [requires_no_buff] if isinstance(requires_no_buff, str) else list(requires_no_buff)
+            for bid in check_ids:
+                bid = str(bid).strip()
+                if bid and bid in active_ids:
+                    return False
+
+        return True
+
     def _sync_managed_state_buffs(self) -> None:
         if not self.state_definitions:
             return
@@ -1696,6 +2269,9 @@ class LifeSystem:
                     continue
 
                 in_range = self._threshold_effect_in_range(effect_def, current, base_max)
+                # 额外的 buff 条件检查
+                if in_range:
+                    in_range = self._effect_conditions_met(effect_def)
                 buff_id = effect_def.get("buff_id")
 
                 if buff_id:
@@ -1710,7 +2286,11 @@ class LifeSystem:
                     if in_range and existing is None:
                         buff_record = self.buff_registry.get(str(buff_id))
                         if buff_record:
-                            self._apply_managed_buff(buff_record, source=source_tag)
+                            if buff_record.get("consume_self"):
+                                # 自消耗 buff：仅执行即时效果，不注册为持续 managed buff
+                                self._apply_record(buff_record, source=source_tag)
+                            else:
+                                self._apply_managed_buff(buff_record, source=source_tag)
                     elif not in_range and existing is not None:
                         self._revert_effect_attr_modifiers(existing)
                         self.profile.active_effects.remove(existing)
@@ -1796,12 +2376,20 @@ class LifeSystem:
         self.profile.nutrition[nutrition_key] = max(lo, min(hi, self.profile.nutrition[nutrition_key]))
 
     def get_nutrition_snapshot(self) -> list[dict[str, Any]]:
+        # 汇总所有活跃效果对营养的每 tick 增量
+        effect_nutrition_deltas: dict[str, float] = {}
+        for effect in self.profile.active_effects:
+            for n_key, val in effect.nutrition_per_tick.items():
+                effect_nutrition_deltas[n_key] = effect_nutrition_deltas.get(n_key, 0.0) + val
+
         snapshot: list[dict[str, Any]] = []
         for nutrition_key, definition in self.nutrition_definitions.items():
             nutrition_name = tr(
                 str(definition.get("i18n_key") or f"life.nutrition.{nutrition_key}"),
                 default=str(definition.get("name") or nutrition_key),
             )
+            decay = float(definition.get("decay", 0.0))
+            effect_delta = effect_nutrition_deltas.get(nutrition_key, 0.0)
             snapshot.append(
                 {
                     "id": nutrition_key,
@@ -1809,35 +2397,138 @@ class LifeSystem:
                     "value": float(self.profile.nutrition.get(nutrition_key, definition.get("default", 0.0))),
                     "min": float(definition.get("min", 0.0)),
                     "max": float(definition.get("max", 100.0)),
-                    "decay": float(definition.get("decay", 0.0)),
+                    "decay": decay,
+                    "tick_delta": -decay + effect_delta,
                 }
             )
         return snapshot
 
     def get_attr_snapshot(self) -> list[dict[str, Any]]:
-        """返回每个属性的值分解快照：基础值、永久修正、效果修正。"""
-        # 从所有激活效果中汇总属性修正量（这部分在效果结束时会被撤销）
-        effect_deltas: dict[str, float] = {k: 0.0 for k in BASE_ATTRS}
+        """返回每个属性的值分解快照：基础值、永久修正、效果修正、颜色、经验、等级。"""
+        attr_keys = self.attr_keys
+        effect_deltas: dict[str, float] = {k: 0.0 for k in attr_keys}
         for effect in self.profile.active_effects:
             for attr, delta in effect.attr_modifiers.items():
                 if attr in effect_deltas:
                     effect_deltas[attr] += float(delta)
 
         result: list[dict[str, Any]] = []
-        for attr in BASE_ATTRS:
-            base = 10.0
+        for attr in attr_keys:
+            defn = self.attr_definitions.get(attr, {})
+            base = float(defn.get("initial", 10.0))
+            color = str(defn.get("color", "#666666"))
+            i18n_key = str(defn.get("i18n_key") or f"life.attr.{attr}")
+            name = tr(i18n_key, default=str(defn.get("name", attr)))
             current = float(self.profile.attrs.get(attr, 0.0))
             effect_delta = effect_deltas.get(attr, 0.0)
             permanent_delta = current - base - effect_delta
+            current_exp = float(self.profile.attr_exp.get(attr, 0.0))
+            current_level = int(self.profile.attr_level.get(attr, 0))
+            level_table = defn.get("level_table", [])
+            next_exp_required: float | None = None
+            if isinstance(level_table, list):
+                for lt_entry in level_table:
+                    if lt_entry.get("level", 0) > current_level:
+                        next_exp_required = float(lt_entry["exp_required"])
+                        break
             result.append({
                 "id": attr,
-                "name": tr(f"life.attr.{attr}", default=attr),
+                "name": name,
+                "color": color,
                 "value": current,
                 "base": base,
                 "permanent_delta": permanent_delta,
                 "effect_delta": effect_delta,
+                "exp": current_exp,
+                "level": current_level,
+                "next_exp_required": next_exp_required,
             })
         return result
+
+    def gain_attr_exp(self, attr_id: str, amount: float) -> list[dict[str, Any]]:
+        """给指定属性增加经验值，触发升级和永久加成。返回本次升级事件列表。"""
+        if attr_id not in self.profile.attr_exp:
+            self.profile.attr_exp[attr_id] = 0.0
+        if attr_id not in self.profile.attr_level:
+            self.profile.attr_level[attr_id] = 0
+        try:
+            delta = float(amount)
+        except Exception:
+            return []
+        if delta <= 0:
+            return []
+        self.profile.attr_exp[attr_id] += delta
+        return self._process_attr_levelup(attr_id)
+
+    def _apply_attr_exp_delta(self, exp_dict: dict[str, Any]) -> list[dict[str, Any]]:
+        """批量处理 attr_exp 字典，返回所有升级事件。"""
+        levelups: list[dict[str, Any]] = []
+        if not isinstance(exp_dict, dict):
+            return levelups
+        for attr_id, amount in exp_dict.items():
+            try:
+                levelups.extend(self.gain_attr_exp(str(attr_id), float(amount)))
+            except Exception:
+                pass
+        return levelups
+
+    def _process_attr_levelup(self, attr_id: str) -> list[dict[str, Any]]:
+        """检查属性经验是否达到升级阈值，应用永久加成，返回升级事件列表。"""
+        defn = self.attr_definitions.get(attr_id, {})
+        level_table = defn.get("level_table", [])
+        if not isinstance(level_table, list) or not level_table:
+            return []
+
+        levelup_events: list[dict[str, Any]] = []
+        current_level = int(self.profile.attr_level.get(attr_id, 0))
+        current_exp = float(self.profile.attr_exp.get(attr_id, 0.0))
+
+        while True:
+            next_entry = None
+            for lt_entry in level_table:
+                if lt_entry.get("level", 0) == current_level + 1:
+                    next_entry = lt_entry
+                    break
+            if next_entry is None:
+                break
+            exp_required = float(next_entry["exp_required"])
+            if current_exp < exp_required:
+                break
+
+            current_level += 1
+            permanent_bonus = next_entry.get("permanent_bonus", {})
+            if isinstance(permanent_bonus, dict):
+                for key, value in permanent_bonus.items():
+                    if key in self.profile.attrs:
+                        try:
+                            self.profile.attrs[key] = self.profile.attrs.get(key, 0.0) + float(value)
+                        except Exception:
+                            pass
+                    elif key.endswith("_max") or key.endswith("_min"):
+                        suffix = "_max" if key.endswith("_max") else "_min"
+                        state_key = key[: -len(suffix)]
+                        mode = suffix[1:]
+                        if state_key in self.state_keys:
+                            self._static_cap_modifiers.append((mode, state_key, value))
+
+            self._refresh_attr_range_effects()
+
+            attr_name = tr(
+                str(defn.get("i18n_key") or f"life.attr.{attr_id}"),
+                default=str(defn.get("name", attr_id)),
+            )
+            event = {
+                "type": "attr_levelup",
+                "attr_id": attr_id,
+                "attr_name": attr_name,
+                "new_level": current_level,
+                "permanent_bonus": dict(permanent_bonus) if isinstance(permanent_bonus, dict) else {},
+            }
+            levelup_events.append(event)
+            _log.INFO(f"[Life][Attr]升级: {attr_id} -> Lv{current_level}")
+
+        self.profile.attr_level[attr_id] = current_level
+        return levelup_events
 
     # ── Event system ────────────────────────────────────────────────
 
@@ -1852,6 +2543,10 @@ class LifeSystem:
         trigger = self.event_trigger_registry.get(trigger_id)
         if not trigger:
             return False, "unknown_trigger"
+        if self.is_dead:
+            classes = trigger.get("classes", [])
+            if not isinstance(classes, list) or "emergency" not in classes:
+                return False, "dead"
         if self.paused:
             return False, "paused"
         # 正在执行中
@@ -1891,7 +2586,50 @@ class LifeSystem:
                     continue
                 if self.profile.inventory.get(item_id, 0) >= 1:
                     return False, f"has_item:{item_id}"
+        # 必须拥有该 buff
+        active_ids = {e.effect_id for e in self.profile.active_effects}
+        requires_buff = trigger.get("requires_buff")
+        if requires_buff is not None:
+            check_ids = [requires_buff] if isinstance(requires_buff, str) else list(requires_buff)
+            for bid in check_ids:
+                bid = str(bid).strip()
+                if bid and bid not in active_ids:
+                    return False, f"missing_buff:{bid}"
+        # 必须没有该 buff
+        requires_no_buff = trigger.get("requires_no_buff")
+        if requires_no_buff is not None:
+            check_ids = [requires_no_buff] if isinstance(requires_no_buff, str) else list(requires_no_buff)
+            for bid in check_ids:
+                bid = str(bid).strip()
+                if bid and bid in active_ids:
+                    return False, f"has_buff:{bid}"
+        # 检查标签注册表的限制：若标签关联的 buff 处于活跃状态，触发器必须拥有该标签
+        trigger_tags: set[str] = set(trigger.get("tags") or [])
+        for tag_id, tag_def in self.tag_registry.items():
+            linked_buff = str(tag_def.get("buff_id") or "").strip()
+            if linked_buff and linked_buff in active_ids:
+                if tag_id not in trigger_tags:
+                    return False, "tag_restricted"
         return True, ""
+
+    def get_trigger_fail_message(self, trigger_id: str, reason: str) -> str | None:
+        """从触发器 json 的 fail_messages 中查找对应原因的自定义文本，支持前缀通配匹配。"""
+        trigger = self.event_trigger_registry.get(trigger_id)
+        if not trigger:
+            return None
+        fail_messages = trigger.get("fail_messages")
+        if not isinstance(fail_messages, dict):
+            return None
+        if reason in fail_messages:
+            return str(fail_messages[reason])
+        colon_idx = reason.find(":")
+        if colon_idx >= 0:
+            prefix = reason[:colon_idx]
+            if f"{prefix}:*" in fail_messages:
+                return str(fail_messages[f"{prefix}:*"])
+            if prefix in fail_messages:
+                return str(fail_messages[prefix])
+        return None
 
     def get_trigger_executing_remaining(self, trigger_id: str) -> float:
         """返回触发器剩余执行时间（0 表示未在执行中）。"""
@@ -2028,32 +2766,50 @@ class LifeSystem:
         if depth > 10:
             _log.WARN("[Life][Event]事件链深度超过10，中止")
             return
-        total_chance = sum(float(e.get("chance", 0)) for e in entries if isinstance(e, dict))
-        if total_chance <= 0:
+        valid_entries = [e for e in entries if isinstance(e, dict)]
+        if not valid_entries:
             return
 
-        # 超额机制
-        if total_chance > 300:
-            divisor = 4
-            draws = 4
-        elif total_chance > 100:
-            divisor = 2
-            draws = 2
-        else:
-            divisor = 1
-            draws = 1
+        # 计算基础概率与属性加成后的有效概率
+        base_chances = [float(e.get("chance", 0)) for e in valid_entries]
+        base_total = sum(base_chances)
+        if base_total <= 0:
+            return
 
-        for _ in range(draws):
-            roll = random.random() * 100.0
-            cumulative = 0.0
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                chance = float(entry.get("chance", 0)) / divisor
-                cumulative += chance
-                if roll < cumulative:
-                    self._apply_pool_entry(entry, result_log, depth)
-                    break
+        effective_chances: list[float] = []
+        for entry, base_chance in zip(valid_entries, base_chances):
+            attr_bonus = entry.get("attr_bonus")
+            bonus = 0.0
+            if isinstance(attr_bonus, dict):
+                for attr_key, bonus_per_point in attr_bonus.items():
+                    attr_val = self.profile.attrs.get(str(attr_key), 0.0)
+                    try:
+                        bonus += float(attr_val) * float(bonus_per_point)
+                    except Exception:
+                        pass
+            effective_chances.append(max(0.0, base_chance + bonus))
+
+        # 基础不触发概率固定，不受属性影响
+        base_no_fire = max(0.0, 100.0 - base_total)
+        effective_total = sum(effective_chances) + base_no_fire
+        if effective_total <= 0:
+            return
+
+        # 归一化：超过100%时等比缩放，保证总概率不超过100%
+        if effective_total > 100.0:
+            scale = 100.0 / effective_total
+            normalized = [c * scale for c in effective_chances]
+        else:
+            normalized = effective_chances
+
+        roll = random.random() * 100.0
+        cumulative = 0.0
+        for entry, chance in zip(valid_entries, normalized):
+            cumulative += chance
+            if roll < cumulative:
+                self._apply_pool_entry(entry, result_log, depth)
+                break
+        # roll 落在不触发区间时不执行任何条目
 
     def _apply_pool_entry(self, entry: dict[str, Any], result_log: list[dict[str, Any]], depth: int) -> None:
         entry_type = str(entry.get("type") or "").strip().lower()
@@ -2084,7 +2840,7 @@ class LifeSystem:
         outcome_desc = self._resolve_record_desc(outcome)
         result_log.append({"type": "outcome", "id": outcome_id, "name": outcome_name, "desc": outcome_desc})
 
-        # 应用 outcome 的直接效果（即时状态变化）
+        # 应用 outcome 的直接效果（即时状态变化 + attr_exp）
         effects = outcome.get("effects")
         if isinstance(effects, dict):
             for key, value in effects.items():
@@ -2093,6 +2849,18 @@ class LifeSystem:
                         self._change_state(key, float(value))
                     except Exception:
                         pass
+            # attr_exp 字段支持
+            attr_exp_field = effects.get("attr_exp")
+            if isinstance(attr_exp_field, dict):
+                levelups = self._apply_attr_exp_delta(attr_exp_field)
+                if levelups:
+                    self._completed_trigger_results.extend(levelups)
+        # outcome 顶层 attr_exp 字段
+        top_attr_exp = outcome.get("attr_exp")
+        if isinstance(top_attr_exp, dict):
+            levelups = self._apply_attr_exp_delta(top_attr_exp)
+            if levelups:
+                self._completed_trigger_results.extend(levelups)
 
         self._execute_event_guaranteed(outcome, result_log)
 
@@ -2104,6 +2872,23 @@ class LifeSystem:
                 entries = pool.get("entries")
                 if isinstance(entries, list) and entries:
                     self._roll_random_pool(entries, result_log, depth=depth + 1)
+
+    def get_tag_display_map(self) -> dict[str, dict[str, str]]:
+        """返回标签 ID → {name, color} 映射，供 UI 渲染标签气泡。"""
+        result: dict[str, dict[str, str]] = {}
+        for tag_id, tag_def in self.tag_registry.items():
+            name = tag_def.get("name", tag_id)
+            i18n_key = tag_def.get("i18n_key")
+            if i18n_key:
+                from util.i18n import tr
+                resolved = tr(i18n_key)
+                if resolved != i18n_key:
+                    name = resolved
+            result[tag_id] = {
+                "name": name,
+                "color": tag_def.get("color", "#888888"),
+            }
+        return result
 
     def get_event_triggers_snapshot(self) -> list[dict[str, Any]]:
         """返回所有已注册事件触发器的快照列表（用于 UI 展示）。"""
@@ -2126,6 +2911,7 @@ class LifeSystem:
                 "block_reason": reason,
                 "mutex": list(trigger.get("mutex", [])),
                 "classes": list(trigger.get("_classes", [])),
+                "tags": list(trigger.get("tags") or []),
             })
         return snapshot
 
@@ -2209,9 +2995,27 @@ class LifeSystem:
                 }
                 for e in self.profile.active_effects
             ],
+            "is_dead": self.is_dead,
+            "death_summary": self._death_summary,
+            "life_started_at": self._life_started_at,
+            "attr_exp": dict(self.profile.attr_exp),
+            "attr_level": dict(self.profile.attr_level),
+            "attr_base": dict(self.profile.attr_base),
         }
 
     def load_profile(self, data: dict[str, Any]) -> None:
+        # 死亡状态恢复
+        self.is_dead = bool(data.get("is_dead", False))
+        self._death_summary = data.get("death_summary") if self.is_dead else None
+        started = data.get("life_started_at")
+        if started is not None:
+            try:
+                self._life_started_at = float(started)
+            except Exception:
+                pass
+        if self.is_dead:
+            self.paused = True
+
         self.profile.states.update(data.get("states", {}))
         raw_nutrition = data.get("nutrition", {})
         if isinstance(raw_nutrition, dict):
@@ -2220,6 +3024,28 @@ class LifeSystem:
                     continue
                 self.profile.nutrition[str(key)] = self._to_float_safe(value, self.profile.nutrition[str(key)])
         self.profile.attrs.update(data.get("attrs", {}))
+        # attr_exp / attr_level 恢复
+        raw_attr_exp = data.get("attr_exp", {})
+        if isinstance(raw_attr_exp, dict):
+            for k, v in raw_attr_exp.items():
+                try:
+                    self.profile.attr_exp[str(k)] = float(v)
+                except Exception:
+                    pass
+        raw_attr_level = data.get("attr_level", {})
+        if isinstance(raw_attr_level, dict):
+            for k, v in raw_attr_level.items():
+                try:
+                    self.profile.attr_level[str(k)] = int(v)
+                except Exception:
+                    pass
+        raw_attr_base = data.get("attr_base", {})
+        if isinstance(raw_attr_base, dict):
+            for k, v in raw_attr_base.items():
+                try:
+                    self.profile.attr_base[str(k)] = float(v)
+                except Exception:
+                    pass
         parsed_inventory: dict[str, int] = {}
         raw_inventory = data.get("inventory", {})
         if isinstance(raw_inventory, dict):
@@ -2299,6 +3125,9 @@ class LifeSystem:
         self._trigger_cooldowns.clear()
         self._trigger_executing.clear()
         self._completed_trigger_results.clear()
+        self.is_dead = False
+        self._death_summary = None
+        self._life_started_at = time.time()
         self.profile = self._create_default_profile()
         self._sync_managed_nutrition_buffs()
         self.save("default")

@@ -322,6 +322,8 @@ class LifeModRegistry:
         lang_dir = mod_dir / "lang"
         event_trigger_dir = mod_dir / "event_trigger"
         event_outcome_dir = mod_dir / "event_outcome"
+        passive_buff_dir = mod_dir / "passive_buff"
+        attr_dir = mod_dir / "attrs"
         if status_dir.exists():
             result["status_dir"] = status_dir
         if buff_dir.exists():
@@ -336,6 +338,10 @@ class LifeModRegistry:
             result["event_trigger_dir"] = event_trigger_dir
         if event_outcome_dir.exists():
             result["event_outcome_dir"] = event_outcome_dir
+        if passive_buff_dir.exists():
+            result["passive_buff_dir"] = passive_buff_dir
+        if attr_dir.exists():
+            result["attr_dir"] = attr_dir
         return result
 
     def execute_with_builtin_loader(
@@ -355,6 +361,7 @@ class LifeModRegistry:
         _, _, path_map, _ = self._collect_mods()
         loaded_resource_dirs: dict[str, dict[str, Path]] = {}
         loaded_hook_states: dict[str, dict[str, Any]] = {}
+        loaded_remove_ids: dict[str, dict[str, list[str]]] = {}
 
         def _builtin_load(mod_id: str, pack: dict[str, Any]) -> bool:
             if bool(pack.get("simulate_load_fail", False)):
@@ -368,10 +375,18 @@ class LifeModRegistry:
                 life_resource_dirs = {
                     k: v
                     for k, v in resource_dirs.items()
-                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir"}
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir"}
                 }
                 if life_resource_dirs:
                     life_system.attach_mod_resource_dirs(reload=False, **life_resource_dirs)
+
+            # remove_ids 收集
+            remove_ids = pack.get("remove_ids")
+            if life_system is not None and isinstance(remove_ids, dict):
+                loaded_remove_ids[mod_id] = remove_ids
+                life_system.add_remove_ids(remove_ids)
+
+            if life_system is not None:
                 life_system.reload_registries()
             if "lang_dir" in resource_dirs:
                 attach_lang_dir(resource_dirs["lang_dir"])
@@ -402,11 +417,21 @@ class LifeModRegistry:
                 life_resource_dirs = {
                     k: v
                     for k, v in resource_dirs.items()
-                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir"}
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir"}
                 }
                 if life_resource_dirs:
                     life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)
-                    life_system.reload_registries()
+
+            # 回滚 remove_ids
+            if life_system is not None and mod_id in loaded_remove_ids:
+                loaded_remove_ids.pop(mod_id, None)
+                life_system.clear_remove_ids()
+                # 重新累积剩余 mod 的 remove_ids
+                for remaining_rid in loaded_remove_ids.values():
+                    life_system.add_remove_ids(remaining_rid)
+
+            if life_system is not None:
+                life_system.reload_registries()
             if "lang_dir" in resource_dirs:
                 detach_lang_dir(resource_dirs["lang_dir"])
 
@@ -433,11 +458,12 @@ class LifeModRegistry:
             remaining_loaded_mods = dict(self._loaded_mods)
             self._loaded_mods.clear()
             if life_system is not None:
+                life_system.clear_remove_ids()
                 for resource_dirs in loaded_resource_dirs.values():
                     life_resource_dirs = {
                         k: v
                         for k, v in resource_dirs.items()
-                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir"}
+                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir"}
                     }
                     if life_resource_dirs:
                         life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)

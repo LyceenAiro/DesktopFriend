@@ -185,6 +185,9 @@
   "life.inventory.use_success": "Successfully used {count} item(s)",
   "life.inventory.use_partial": "Partially used: success {ok}, failed {fail}",
   "life.inventory.use_failed": "Use failed. Check usability or amount",
+  "life.inventory.use_dead": "Pet is dead, cannot use this item",
+  "life.inventory.use_tag_restricted": "Pet is in critical condition, only emergency items can be used",
+  "life.inventory.use_blocked_btn": "Blocked",
   "life.inventory.info.name": "Name",
   "life.inventory.info.id": "ID",
   "life.inventory.info.category": "Category",
@@ -320,6 +323,8 @@
   "life.events.cooldown": "Cooldown",
   "life.events.mutex_blocked": "Mutex locked",
   "life.events.fire_failed": "Event trigger failed",
+  "life.events.fire_dead": "Pet is dead, cannot fire this event",
+  "life.events.fire_tag_restricted": "Pet is in critical condition, only emergency events can be triggered",
   "life.events.fire_on_cooldown": "This event needs {seconds}s more before it can be triggered again",
   "life.events.fire_mutex_blocked": "This event is mutex-locked ({trigger} on cooldown)",
   "life.events.fire_missing_item": "Missing required item in inventory: {item}",
@@ -406,5 +411,27 @@
   "life.outcome.library_card_registered.name": "Card Approved",
   "life.outcome.library_card_registered.desc": "The library card is ready. {character_name} can now study in the library.",
   "life.outcome.library_quiet_focus.name": "Quiet Focus",
-  "life.outcome.library_quiet_focus.desc": "The calm library atmosphere helps {character_name} quickly enter a focused state."
+  "life.outcome.library_quiet_focus.desc": "The calm library atmosphere helps {character_name} quickly enter a focused state.",
+
+  "life.death.title": "Pet Has Died",
+  "life.death.subtitle": "The raising session has ended",
+  "life.death.play_time": "Raising duration: {time}",
+  "life.death.died_at": "Time of death: {time}",
+  "life.death.reset_hint": "Go to Settings \u2192 Life Management to reset and start over",
+
+  "settings.life.reset.dead_warn": "The pet has died and all functions are paused. Reset the raising data to revive.",
+
+  "life.item_class.first_aid": "First Aid",
+  "life.buff_class.first_aid": "First Aid",
+  "life.trigger_class.first_aid": "First Aid",
+
+  "life.item.glucose_iv.name": "Glucose IV Solution",
+  "life.item.glucose_iv.desc": "Intravenous glucose infusion that continuously replenishes hydration and energy. An emergency supply for critical conditions.",
+  "life.buff.glucose_iv_drip.name": "Glucose IV Drip",
+  "life.buff.glucose_iv_drip.desc": "Receiving glucose infusion, steadily restoring hydration and satiety.",
+  "life.buff.hospitalized.name": "Hospitalized",
+  "life.buff.hospitalized.desc": "Receiving hospital treatment, comprehensively restoring body condition and improving vitality.",
+  "life.trigger.hospitalization.name": "Hospitalization",
+  "life.trigger.hospitalization.desc": "Admitted to hospital for treatment. Takes a long time to recover, but comprehensively improves health.",
+  "life.tag.first_aid": "First Aid"
 }

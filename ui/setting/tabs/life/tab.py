@@ -28,6 +28,7 @@ class LifeManagementTab(QFrame):
         set_enabled_callback: Callable[[bool], None],
         reset_callback: Callable[[], None],
         feedback_callback: Callable[[str, str], None],
+        is_dead_getter: Callable[[], bool] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -35,6 +36,7 @@ class LifeManagementTab(QFrame):
         self._set_enabled_callback = set_enabled_callback
         self._reset_callback = reset_callback
         self._feedback_callback = feedback_callback
+        self._is_dead_getter = is_dead_getter
 
         life_cfg = load_config("life")
         initial_enabled = bool(life_cfg.get("life_enabled", is_enabled_getter()))
@@ -84,13 +86,20 @@ class LifeManagementTab(QFrame):
 
         reset_row = QHBoxLayout()
         reset_row.setSpacing(ROW_SPACING)
-        reset_btn = QPushButton(tr("settings.life.reset.button"))
-        reset_btn.setObjectName("primaryButton")
-        reset_btn.setMinimumWidth(160)
-        reset_btn.clicked.connect(self._on_reset_clicked)
-        reset_row.addWidget(reset_btn)
+        self._reset_btn = QPushButton(tr("settings.life.reset.button"))
+        self._reset_btn.setObjectName("primaryButton")
+        self._reset_btn.setMinimumWidth(160)
+        self._reset_btn.clicked.connect(self._on_reset_clicked)
+        reset_row.addWidget(self._reset_btn)
         reset_row.addStretch()
         reset_layout.addLayout(reset_row)
+
+        self._dead_warn_label = QLabel(tr("settings.life.reset.dead_warn"))
+        self._dead_warn_label.setObjectName("helperText")
+        self._dead_warn_label.setStyleSheet("color: #e09050; font-weight: bold;")
+        self._dead_warn_label.setWordWrap(True)
+        self._dead_warn_label.setVisible(False)
+        reset_layout.addWidget(self._dead_warn_label)
 
         layout.addWidget(reset_card)
         layout.addStretch()
@@ -103,6 +112,17 @@ class LifeManagementTab(QFrame):
             self._feedback_callback(tr("settings.life.enabled.on"), "success")
         else:
             self._feedback_callback(tr("settings.life.enabled.off"), "info")
+
+    def refresh_state(self) -> None:
+        """根据当前死亡状态更新重置区域的高亮提示。"""
+        if self._is_dead_getter is None:
+            return
+        is_dead = bool(self._is_dead_getter())
+        self._dead_warn_label.setVisible(is_dead)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.refresh_state()
 
     def _on_reset_clicked(self) -> None:
         dlg = ConfirmDialog(
