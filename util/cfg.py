@@ -40,6 +40,9 @@ DEFAULT_CONFIGS = {
         "locale": "zh_cn",
         "log_level": "INFO",
         "log_max_file_size_mb": 32,
+        "life_tick_interval_ms": 1000,
+        "life_afk_tick_interval_ms": 5000,
+        "life_afk_timeout_s": 3600,
     },
     "life": {
         "life_enabled": False,

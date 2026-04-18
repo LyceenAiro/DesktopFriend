@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Callable
 
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -29,6 +31,8 @@ class LifeManagementTab(QFrame):
         reset_callback: Callable[[], None],
         feedback_callback: Callable[[str, str], None],
         is_dead_getter: Callable[[], bool] | None = None,
+        export_callback: Callable[[str], tuple[bool, str]] | None = None,
+        import_callback: Callable[[str], tuple[bool, str]] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -37,6 +41,8 @@ class LifeManagementTab(QFrame):
         self._reset_callback = reset_callback
         self._feedback_callback = feedback_callback
         self._is_dead_getter = is_dead_getter
+        self._export_callback = export_callback
+        self._import_callback = import_callback
 
         life_cfg = load_config("life")
         initial_enabled = bool(life_cfg.get("life_enabled", is_enabled_getter()))
@@ -102,6 +108,33 @@ class LifeManagementTab(QFrame):
         reset_layout.addWidget(self._dead_warn_label)
 
         layout.addWidget(reset_card)
+
+        # ---- 卡片三：存档管理 ----
+        archive_card = create_section_card(
+            tr("settings.life.card.archive.title"),
+            tr("settings.life.card.archive.desc"),
+        )
+        archive_layout = archive_card.layout()
+
+        archive_row = QHBoxLayout()
+        archive_row.setSpacing(ROW_SPACING)
+
+        self._export_btn = QPushButton(tr("settings.life.export.button"))
+        self._export_btn.setMinimumWidth(140)
+        self._export_btn.clicked.connect(self._on_export_clicked)
+        self._export_btn.setEnabled(export_callback is not None)
+        archive_row.addWidget(self._export_btn)
+
+        self._import_btn = QPushButton(tr("settings.life.import.button"))
+        self._import_btn.setMinimumWidth(140)
+        self._import_btn.clicked.connect(self._on_import_clicked)
+        self._import_btn.setEnabled(import_callback is not None)
+        archive_row.addWidget(self._import_btn)
+
+        archive_row.addStretch()
+        archive_layout.addLayout(archive_row)
+
+        layout.addWidget(archive_card)
         layout.addStretch()
 
     def save_tab(self) -> None:
@@ -133,4 +166,46 @@ class LifeManagementTab(QFrame):
         if dlg.exec() == ConfirmDialog.Accepted:
             self._reset_callback()
             self._feedback_callback(tr("settings.life.reset.success"), "success")
+
+    def _on_export_clicked(self) -> None:
+        if self._export_callback is None:
+            return
+        default_name = f"life_save_{date.today().strftime('%Y%m%d')}.json"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("settings.life.export.button"),
+            default_name,
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not file_path:
+            return
+        ok, err = self._export_callback(file_path)
+        if ok:
+            self._feedback_callback(tr("settings.life.export.success"), "success")
+        else:
+            self._feedback_callback(f"{tr('settings.life.export.fail')}: {err}", "error")
+
+    def _on_import_clicked(self) -> None:
+        if self._import_callback is None:
+            return
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("settings.life.import.button"),
+            "",
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not file_path:
+            return
+        dlg = ConfirmDialog(
+            title=tr("settings.life.import.confirm.title"),
+            message=tr("settings.life.import.confirm.message"),
+            parent=self,
+        )
+        if dlg.exec() != ConfirmDialog.Accepted:
+            return
+        ok, err = self._import_callback(file_path)
+        if ok:
+            self._feedback_callback(tr("settings.life.import.success"), "success")
+        else:
+            self._feedback_callback(f"{tr('settings.life.import.fail')}: {err}", "error")
 

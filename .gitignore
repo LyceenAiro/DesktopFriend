@@ -11,6 +11,7 @@ install.bat
 *.aseprite
 /resources/PetArt*
 /resources/*.json
+mod
 
 # 暂时还没做好的基本icon文件
 logo.ico

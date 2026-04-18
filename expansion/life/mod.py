@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from util.i18n import attach_lang_dir, detach_lang_dir
+from util.log import _log
 
 
 _HOOK_SKIP = object()
@@ -89,11 +90,19 @@ class LifeModRegistry:
 
     def discover(self) -> list[Path]:
         if not self.mod_root.exists():
+            _log.DEBUG(f"[Mod]mod目录不存在: {self.mod_root}")
             return []
-        return sorted([p for p in self.mod_root.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
+        dirs = sorted([p for p in self.mod_root.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
+        _log.INFO(f"[Mod]扫描到 {len(dirs)} 个 mod 目录: {[d.name for d in dirs]}")
+        return dirs
 
     def load_pack_info(self, mod_dir: Path) -> dict[str, Any] | None:
-        return _safe_read_json(mod_dir / "pack_info.json")
+        pack = _safe_read_json(mod_dir / "pack_info.json")
+        if pack is None:
+            _log.WARN(f"[Mod]{mod_dir.name}: pack_info.json 缺失或格式错误")
+        else:
+            _log.DEBUG(f"[Mod]{mod_dir.name}: id={pack.get('id')}, version={pack.get('version')}")
+        return pack
 
     def _collect_mods(
         self,
@@ -192,6 +201,13 @@ class LifeModRegistry:
 
             if errors:
                 issues[mod_id] = errors
+
+        if issues:
+            for mid, errs in issues.items():
+                for err in errs:
+                    _log.WARN(f"[Mod]校验问题: {mid}: {err}")
+        else:
+            _log.DEBUG(f"[Mod]校验通过，共 {len(info_map)} 个 mod")
 
         return issues
 
@@ -342,6 +358,9 @@ class LifeModRegistry:
             result["passive_buff_dir"] = passive_buff_dir
         if attr_dir.exists():
             result["attr_dir"] = attr_dir
+        level_dir = mod_dir / "level"
+        if level_dir.exists():
+            result["level_dir"] = level_dir
         return result
 
     def execute_with_builtin_loader(
@@ -364,8 +383,10 @@ class LifeModRegistry:
         loaded_remove_ids: dict[str, dict[str, list[str]]] = {}
 
         def _builtin_load(mod_id: str, pack: dict[str, Any]) -> bool:
+            _log.DEBUG(f"[Mod]开始加载: {mod_id}")
             if bool(pack.get("simulate_load_fail", False)):
                 self._append_event("load", mod_id, "failed", "simulate_load_fail", event_log_path)
+                _log.WARN(f"[Mod]{mod_id}: 模拟加载失败")
                 return False
 
             resource_dirs = self._get_mod_resource_dirs(path_map[mod_id]) if mod_id in path_map else {}
@@ -375,7 +396,7 @@ class LifeModRegistry:
                 life_resource_dirs = {
                     k: v
                     for k, v in resource_dirs.items()
-                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir"}
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir"}
                 }
                 if life_resource_dirs:
                     life_system.attach_mod_resource_dirs(reload=False, **life_resource_dirs)
@@ -405,6 +426,7 @@ class LifeModRegistry:
 
             self._loaded_mods[mod_id] = dict(pack)
             self._append_event("load", mod_id, "ok", "", event_log_path)
+            _log.INFO(f"[Mod]加载成功: {mod_id} (v{pack.get('version', '?')}) 资源={list(resource_dirs.keys())}")
             return True
 
         def _builtin_rollback(mod_id: str, pack: dict[str, Any]) -> bool:
@@ -417,7 +439,7 @@ class LifeModRegistry:
                 life_resource_dirs = {
                     k: v
                     for k, v in resource_dirs.items()
-                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir"}
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir"}
                 }
                 if life_resource_dirs:
                     life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)
@@ -450,6 +472,7 @@ class LifeModRegistry:
             loaded_resource_dirs.pop(mod_id, None)
             self._loaded_mods.pop(mod_id, None)
             self._append_event("rollback", mod_id, "ok", "", event_log_path)
+            _log.INFO(f"[Mod]回滚成功: {mod_id}")
             return True
 
         result = self.execute_load_plan(load_callback=_builtin_load, rollback_callback=_builtin_rollback)
@@ -463,7 +486,7 @@ class LifeModRegistry:
                     life_resource_dirs = {
                         k: v
                         for k, v in resource_dirs.items()
-                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir"}
+                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir"}
                     }
                     if life_resource_dirs:
                         life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)

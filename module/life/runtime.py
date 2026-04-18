@@ -10,6 +10,7 @@ from util.log import _log
 _life_system: LifeSystem | None = None
 _life_timer: QTimer | None = None
 _life_revive_timer: QTimer | None = None  # 桌宠死亡后的轻量检测计时器
+_mod_registry = None  # type: ignore
 
 
 def get_life_system() -> LifeSystem:
@@ -21,6 +22,33 @@ def get_life_system() -> LifeSystem:
         life_cfg = load_config("life")
         _life_system.paused = not bool(life_cfg.get("life_enabled", True))
     return _life_system
+
+
+def load_mods() -> dict:
+    """扫描并加载 mod/ 目录下所有 mod，返回 execute_with_builtin_loader 结果。"""
+    global _mod_registry
+    from expansion.life.mod import LifeModRegistry
+
+    life = get_life_system()
+    _mod_registry = LifeModRegistry(mod_root="mod", protocol_version="0.3")
+    result = _mod_registry.execute_with_builtin_loader(
+        event_log_path="log/mod_event.log",
+        life_system=life,
+    )
+    loaded = result.get("loaded", [])
+    issues = result.get("issues", {})
+    if loaded:
+        _log.INFO(f"[Mod]已加载 {len(loaded)} 个 mod: {loaded}")
+    elif not issues:
+        _log.INFO("[Mod]未发现任何 mod")
+    if issues:
+        for mid, errs in issues.items():
+            _log.WARN(f"[Mod]加载问题 {mid}: {errs}")
+    return result
+
+
+def get_mod_registry():
+    return _mod_registry
 
 
 def is_life_loop_active() -> bool:
@@ -99,3 +127,48 @@ def _switch_to_revive_timer(parent=None) -> None:
 
     if not _life_revive_timer.isActive():
         _life_revive_timer.start(5000)
+
+
+# --------------------------------------------------------------------------- #
+# 休眠（AFK）控制
+# --------------------------------------------------------------------------- #
+
+_normal_tick_interval_ms: int = 1000
+_afk_tick_interval_ms: int = 5000
+# 当前是否因 hide 或 AFK 而处于休眠状态
+_hibernation_reason: set[str] = set()  # 可能同时存在 "hidden" 和 "afk"
+
+
+def configure_tick_intervals(normal_ms: int, afk_ms: int) -> None:
+    """设置正常与 AFK 的 tick 间隔（由调试设置保存后调用）。"""
+    global _normal_tick_interval_ms, _afk_tick_interval_ms
+    _normal_tick_interval_ms = max(100, int(normal_ms))
+    _afk_tick_interval_ms = max(100, int(afk_ms))
+    # 重新应用当前实际间隔
+    _apply_current_interval()
+
+
+def _apply_current_interval() -> None:
+    """根据当前休眠原因集合决定使用哪个 tick 间隔。"""
+    if _life_timer is None or not _life_timer.isActive():
+        return
+    if _hibernation_reason:
+        target = _afk_tick_interval_ms
+    else:
+        target = _normal_tick_interval_ms
+    if _life_timer.interval() != target:
+        _life_timer.setInterval(target)
+        _log.DEBUG(f"[Life]tick 间隔已切换: {target}ms reason={_hibernation_reason or 'normal'}")
+
+
+def enter_hibernation(reason: str) -> None:
+    """进入休眠状态（reason: 'hidden' 或 'afk'）。"""
+    _hibernation_reason.add(reason)
+    _apply_current_interval()
+
+
+def leave_hibernation(reason: str) -> None:
+    """离开休眠状态（reason: 'hidden' 或 'afk'）。"""
+    _hibernation_reason.discard(reason)
+    _apply_current_interval()
+

@@ -170,6 +170,21 @@ class BasicSettingsTab(QFrame):
         parent_layout.addLayout(row)
         return combo
 
+    def refresh_locale_combo(self) -> None:
+        """重新扫描可用语言并刷新下拉框（mod 加载后调用）。"""
+        combo = self.locale_combo
+        current = str(combo.currentData() or get_locale()).strip().lower()
+        combo.blockSignals(True)
+        combo.clear()
+        selected_index = -1
+        for idx, (locale_code, display_name) in enumerate(get_available_locales()):
+            combo.addItem(display_name, locale_code)
+            if locale_code == current:
+                selected_index = idx
+        if selected_index >= 0:
+            combo.setCurrentIndex(selected_index)
+        combo.blockSignals(False)
+
     def save_tab(self):
         previous_locale = str(self._basic_config.get("locale", get_locale())).strip().lower()
         selected_locale = str(self.locale_combo.currentData() or "zh_cn").strip().lower()

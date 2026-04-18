@@ -339,6 +339,7 @@ class LifeWindow(QDialog):
             nutrition_tab.update_data(nutrition)
         if attrs_tab is not None:
             attrs_tab.update_data(self.life.get_attr_snapshot())
+            attrs_tab.update_level(self.life.get_level_snapshot())
 
         # 智能刷新：数据有变化时始终更新（包括当前在该标签页时），无变化时仅在非当前标签页时更新
         current_item_sig = tuple((i["id"], i["count"], i.get("on_cooldown", False)) for i in items)

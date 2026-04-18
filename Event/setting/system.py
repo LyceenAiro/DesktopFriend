@@ -47,6 +47,8 @@ def HideApp(self: DesktopPet):
     self.AutoMove = False
     self.move_count = 0
     self.origin_x = 0
+    from module.life.runtime import enter_hibernation
+    enter_hibernation("hidden")
     _play_hide_animation(self)
 
 
@@ -105,6 +107,8 @@ def ShowApp(self: DesktopPet):
     self.show()
     self.activateWindow()
     _log.INFO("显示桌宠触发")
+    from module.life.runtime import leave_hibernation
+    leave_hibernation("hidden")
 
     from Event.Ai.walk import auto_walk
     auto_walk.stop_timer()

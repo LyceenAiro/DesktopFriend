@@ -359,7 +359,10 @@ class LifeEventsTab(QFrame):
         item_blocked = not can_fire and (
             block_reason.startswith("missing_item:") or block_reason.startswith("has_item:")
         )
-        tag_or_dead_blocked = not can_fire and block_reason in ("dead", "tag_restricted")
+        tag_or_dead_blocked = not can_fire and (
+            block_reason == "dead" or block_reason.startswith("tag_restricted:")
+            or block_reason == "level_too_low"
+        )
         if executing:
             fire_btn = QPushButton(tr("life.events.fire_executing_btn"))
             fire_btn.setFixedWidth(72)
@@ -406,10 +409,7 @@ class LifeEventsTab(QFrame):
             if reason == "dead":
                 self._feedback_callback(tr("life.events.fire_dead"), "warning")
                 return
-            if reason == "tag_restricted":
-                self._feedback_callback(tr("life.events.fire_tag_restricted"), "warning")
-                return
-            # 优先显示自定义失败文本
+            # 优先显示自定义失败文本（含标签限制 tag_restricted:{tag_id} 的注册表回查）
             if self._get_trigger_fail_message is not None:
                 custom_msg = self._get_trigger_fail_message(trigger_id, reason)
                 if custom_msg:

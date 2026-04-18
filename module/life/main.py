@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import random
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+_EXP_MAX: int = 2 ** 31 - 1  # 经验值上限，防止溢出
 
 from util.log import _log
 from util.i18n import tr
@@ -16,6 +19,7 @@ from module.life.schema import (
     validate_item_record,
     validate_event_trigger_record,
     validate_event_outcome_record,
+    validate_level_config,
 )
 from module.life.sqlite_store import LifeSqliteStore
 
@@ -51,7 +55,11 @@ class LifeProfile:
     active_effects: list[LifeEffect] = field(default_factory=list)
     attr_exp: dict[str, float] = field(default_factory=dict)    # 每属性当前经验值
     attr_level: dict[str, int] = field(default_factory=dict)   # 每属性当前等级
-    attr_base: dict[str, float] = field(default_factory=dict)  # 上次使用的 initial 基础值
+    attr_base: dict[str, float] = field(default_factory=dict)  # 上次使用的 initial 基础值（用于检测外部改动）
+    # 全局等级系统
+    level: int = 1                                              # 全局角色等级（最低 1）
+    exp: float = 0.0                                            # 当前等级已累计经验（始终 ≥ 0）
+    permanent_attr_delta: dict[str, float] = field(default_factory=dict)  # 物品永久属性修正（重置前不消失）
 
 class LifeSystem:
     """0.3 draft implementation for life architecture.
@@ -92,6 +100,9 @@ class LifeSystem:
         self.extra_passive_buff_dirs: list[Path] = []
         self.extra_attr_dirs: list[Path] = []
         self.extra_tag_dirs: list[Path] = []
+        # 全局等级系统资源目录（mod 可注入覆盖 level_setting.json）
+        self.level_dir: Path = Path("module/life/level")
+        self.extra_level_dirs: list[Path] = []
         self.store = store or LifeSqliteStore()
         self.character_name: str = ""  # 角色名称（由外部注入，如资源包 PACK_NAME）
         self.paused: bool = False  # 暂停时 tick 和物品使用均被冻结
@@ -110,6 +121,13 @@ class LifeSystem:
         self._trigger_cooldowns: dict[str, float] = {}  # trigger_id → 可用时间戳
         self._trigger_executing: dict[str, float] = {}  # trigger_id → 完成时间戳 (正在执行中)
         self._completed_trigger_results: list[dict[str, Any]] = []  # 执行完成事件队列（供 UI 消费）
+        self._inventory_passive_attrs: dict[str, float] = {}  # 背包被动属性加成缓存（按需重算）
+
+        # 全局等级系统运行时数据
+        self._exp_table: dict[int, float] = {}        # level → 升级所需经验（满级时无此 key）
+        self._max_level: int = 1                      # 最高等级
+        self._passive_exp_per_tick: float = 0.0       # 基础每 tick 被动经验
+        self._inventory_passive_exp_bonus: float = 0.0  # 背包带来的额外每 tick 被动经验
 
         # 死亡系统
         self.is_dead: bool = False
@@ -119,6 +137,7 @@ class LifeSystem:
         self.state_definitions: dict[str, dict[str, Any]] = self._load_state_definitions()
         self.nutrition_definitions: dict[str, dict[str, Any]] = self._load_nutrition_definitions()
         self.attr_definitions: dict[str, dict[str, Any]] = self._load_attr_definitions()
+        self._load_level_config()
 
         self._attr_cap_bonus_max: dict[str, float] = {k: 0.0 for k in self.state_keys}
         self._attr_cap_bonus_min: dict[str, float] = {k: 0.0 for k in self.state_keys}
@@ -126,6 +145,7 @@ class LifeSystem:
 
         self.profile = self._create_default_profile()
         self.reload_registries()
+
 
     def _resolve_name(self, template: str) -> str:
         """将字段中的 {character_name} 占位符替换为当前角色名。"""
@@ -246,6 +266,7 @@ class LifeSystem:
         self._apply_pending_remove_ids()
         self._refresh_attr_range_effects()
         self._report_validation_issues()
+        self._recompute_inventory_passive_attrs()
         _log.INFO(
             "[Life]注册完成 "
             f"status={len(self.state_definitions)} nutrition={len(self.nutrition_definitions)} "
@@ -372,6 +393,148 @@ class LifeSystem:
     def _iter_tag_dirs(self) -> list[Path]:
         return [self.tag_dir, *self.extra_tag_dirs]
 
+    def _iter_level_dirs(self) -> list[Path]:
+        return [self.level_dir, *self.extra_level_dirs]
+
+    # --------------------------------------------------------------------------- #
+    # 全局等级系统
+    # --------------------------------------------------------------------------- #
+
+    def _load_level_config(self) -> None:
+        """从 level_setting.json 加载等级配置，构建 _exp_table 和 _max_level。
+        若存在多个 level 目录（mod 注入），最后一个有效的 level_setting.json 覆盖前者。
+        """
+        raw: dict[str, Any] | None = None
+        for directory in self._iter_level_dirs():
+            cfg_path = directory / "level_setting.json"
+            if cfg_path.exists():
+                try:
+                    candidate = json.loads(cfg_path.read_text(encoding="utf-8"))
+                    if isinstance(candidate, dict):
+                        raw = candidate
+                except Exception as exc:
+                    _log.WARN(f"[Life][Level]读取 level_setting.json 失败: {exc}")
+
+        if raw is None:
+            _log.WARN("[Life][Level]未找到 level_setting.json，等级系统使用默认配置（最高1级）")
+            self._exp_table = {}
+            self._max_level = 1
+            self._passive_exp_per_tick = 0.0
+            return
+
+        issues = validate_level_config(raw)
+        for issue in issues:
+            if issue.level == "error":
+                _log.WARN(f"[Life][Level]level_setting.json 校验错误: {issue.message} ({issue.field})")
+
+        init_exp = float(raw.get("initial_exp_required", 100.0))
+        self._passive_exp_per_tick = float(raw.get("passive_exp_per_tick", 0.0))
+
+        growth_ranges: list[dict[str, Any]] = raw.get("growth_ranges", [])
+        if not isinstance(growth_ranges, list):
+            growth_ranges = []
+
+        # 按 from_level 升序排列，找到第一个断层截断
+        try:
+            growth_ranges_sorted = sorted(
+                [r for r in growth_ranges if isinstance(r, dict)],
+                key=lambda r: int(r.get("from_level", 0))
+            )
+        except Exception:
+            growth_ranges_sorted = []
+
+        # 构建各等级升级所需经验
+        exp_table: dict[int, float] = {}
+        current_required = init_exp
+        max_to_level = 0
+
+        prev_to = 0  # 用于检测断层
+        for rng in growth_ranges_sorted:
+            try:
+                fl = int(rng["from_level"])
+                tl = int(rng["to_level"])
+                eg = float(rng["exp_growth"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            # 检测断层
+            if prev_to > 0 and fl != prev_to + 1:
+                _log.DEBUG(f"[Life][Level]等级区间断层，截断于 {prev_to} 级")
+                break
+
+            for level in range(fl, tl + 1):
+                if level > fl:
+                    current_required = max(0.01, current_required + eg)
+                # 升级经验超出 INT_MAX 则截断，不再注册更高等级
+                if current_required > _EXP_MAX:
+                    _log.DEBUG(f"[Life][Level]等级 {level} 升级经验 {current_required:.0f} 超出上限，截断于 {max_to_level} 级")
+                    break
+                exp_table[level] = current_required
+                max_to_level = level
+            else:
+                # 为下一个区间更新当前 required（累加一次 growth 以便衔接）
+                current_required = max(0.01, current_required + eg)
+                prev_to = tl
+                continue
+            break  # 内层 break 触发，跳出外层循环
+
+        self._exp_table = exp_table
+        self._max_level = max_to_level if max_to_level > 0 else 1
+        # 满级本身没有"升到下一级"的需求，移除该表项（避免满级仍提示还需经验）
+        self._exp_table.pop(self._max_level, None)
+        _log.INFO(f"[Life][Level]等级系统已加载: max_level={self._max_level} passive_exp={self._passive_exp_per_tick}")
+
+    def reload_level_config(self) -> None:
+        """重新加载等级配置（mod 加载/卸载后调用）。满级 clamp 当前等级。"""
+        self._load_level_config()
+        if self.profile.level > self._max_level:
+            _log.INFO(f"[Life][Level]当前等级 {self.profile.level} 超出新最高等级 {self._max_level}，已 clamp")
+            self.profile.level = self._max_level
+
+    @property
+    def max_level(self) -> int:
+        return self._max_level
+
+    def get_exp_required(self, level: int) -> float | None:
+        """返回从 level 升到 level+1 所需经验值；满级时返回 None。"""
+        return self._exp_table.get(level)
+
+    def get_passive_exp_per_tick(self) -> float:
+        """返回当前每 tick 总被动经验（基础 + 背包加成）。"""
+        return self._passive_exp_per_tick + self._inventory_passive_exp_bonus
+
+    def get_level_snapshot(self) -> dict[str, Any]:
+        """返回全局等级快照供 UI 使用。"""
+        return {
+            "level": self.profile.level,
+            "max_level": self._max_level,
+            "exp": self.profile.exp,
+            "exp_required": self._exp_table.get(self.profile.level),
+            "passive_exp_per_tick": self.get_passive_exp_per_tick(),
+        }
+
+    def set_level(self, level: int) -> bool:
+        """调试专用：直接设置等级并同步属性加成，经验重置为 0。"""
+        level = max(1, min(int(level), self._max_level))
+        current = self.profile.level
+        if level > current:
+            for lv in range(current + 1, level + 1):
+                self._apply_char_level_attr_bonus(lv)
+        elif level < current:
+            for attr_id in list(self.profile.attrs):
+                self.profile.attrs[attr_id] = self.profile.attr_base.get(attr_id, 10.0)
+            for lv in range(2, level + 1):
+                self._apply_char_level_attr_bonus(lv)
+        self.profile.level = level
+        self.profile.exp = 0.0
+        return True
+
+    def set_exp(self, exp: float) -> bool:
+        """调试专用：直接设置经验值并处理升级。"""
+        self.profile.exp = min(_EXP_MAX, max(0.0, float(exp)))
+        self._process_char_levelup()
+        return True
+
     def attach_mod_resource_dirs(
         self,
         *,
@@ -383,6 +546,7 @@ class LifeSystem:
         event_outcome_dir: str | Path | None = None,
         passive_buff_dir: str | Path | None = None,
         attr_dir: str | Path | None = None,
+        level_dir: str | Path | None = None,
         reload: bool = True,
     ) -> None:
         changed = False
@@ -402,6 +566,9 @@ class LifeSystem:
             changed = self._append_unique_path(self.extra_passive_buff_dirs, passive_buff_dir) or changed
         if attr_dir is not None:
             changed = self._append_unique_path(self.extra_attr_dirs, attr_dir) or changed
+        if level_dir is not None:
+            if self._append_unique_path(self.extra_level_dirs, level_dir):
+                self.reload_level_config()
         if changed and reload:
             self.reload_registries()
 
@@ -416,6 +583,7 @@ class LifeSystem:
         event_outcome_dir: str | Path | None = None,
         passive_buff_dir: str | Path | None = None,
         attr_dir: str | Path | None = None,
+        level_dir: str | Path | None = None,
         reload: bool = True,
     ) -> None:
         changed = False
@@ -435,6 +603,9 @@ class LifeSystem:
             changed = self._remove_path(self.extra_passive_buff_dirs, passive_buff_dir) or changed
         if attr_dir is not None:
             changed = self._remove_path(self.extra_attr_dirs, attr_dir) or changed
+        if level_dir is not None:
+            if self._remove_path(self.extra_level_dirs, level_dir):
+                self.reload_level_config()
         if changed and reload:
             self.reload_registries()
 
@@ -527,9 +698,17 @@ class LifeSystem:
                     bonus = dict(lt_entry["permanent_bonus"]) if isinstance(lt_entry.get("permanent_bonus"), dict) else {}
                     level_table.append({"level": lv, "exp_required": exp_req, "permanent_bonus": bonus})
                 level_table.sort(key=lambda e: e["level"])
+            # char_level_bonuses 全局等级驱动的属性加成（可选）
+            char_level_bonuses_raw = record.get("char_level_bonuses")
+            char_level_bonuses: list[dict[str, Any]] = []
+            if isinstance(char_level_bonuses_raw, list):
+                for clb in char_level_bonuses_raw:
+                    if isinstance(clb, dict):
+                        char_level_bonuses.append(clb)
             normalized.append({"id": attr_id, "name": name, "i18n_key": i18n_key,
                                 "color": color, "initial": initial, "order": order,
-                                "level_table": level_table})
+                                "level_table": level_table,
+                                "char_level_bonuses": char_level_bonuses})
 
         if not normalized:
             return self._build_default_attr_definitions()
@@ -1325,14 +1504,24 @@ class LifeSystem:
             except Exception:
                 pass
 
+        if consume:
+            self._recompute_inventory_passive_attrs()
         return True
 
     def add_item(self, item_id: str, count: int = 1) -> bool:
         if item_id not in self.item_registry:
             _log.WARN(f"[Life]不能加入未知物品: {item_id}")
             return False
-        delta = max(1, int(count))
-        self.profile.inventory[item_id] = self.profile.inventory.get(item_id, 0) + delta
+        item = self.item_registry[item_id]
+        if item.get("unique", False):
+            # 唯一物品：已持有时忽略本次获取，未持有时强制设为 1
+            if self.profile.inventory.get(item_id, 0) >= 1:
+                return True
+            self.profile.inventory[item_id] = 1
+        else:
+            delta = max(1, int(count))
+            self.profile.inventory[item_id] = self.profile.inventory.get(item_id, 0) + delta
+        self._recompute_inventory_passive_attrs()
         return True
 
     def set_item_count(self, item_id: str, count: int) -> bool:
@@ -1340,10 +1529,16 @@ class LifeSystem:
             _log.WARN(f"[Life]不能设置未知物品数量: {item_id}")
             return False
         normalized = max(0, int(count))
+        # 唯一物品最多持有 1 个
+        item = self.item_registry[item_id]
+        if item.get("unique", False):
+            normalized = min(normalized, 1)
         if normalized == 0:
             self.profile.inventory.pop(item_id, None)
+            self._recompute_inventory_passive_attrs()
             return True
         self.profile.inventory[item_id] = normalized
+        self._recompute_inventory_passive_attrs()
         return True
 
     def list_item_ids(self) -> list[str]:
@@ -1363,6 +1558,45 @@ class LifeSystem:
         self._clamp_nutrition(nutrition_id)
         return True
 
+    def _recompute_inventory_passive_attrs(self) -> None:
+        """遍历背包，将所有物品的 passive_attr_bonus 按递减公式汇总并缓存。"""
+        result: dict[str, float] = {}
+        for item_id, count in self.profile.inventory.items():
+            item_info = self.item_registry.get(item_id)
+            if not item_info:
+                continue
+            bonus_map = item_info.get("passive_attr_bonus")
+            if not isinstance(bonus_map, dict):
+                continue
+            n = max(1, int(count))
+            # n 件同类物品的衰减几何级数和：b * 2 * (1 - 0.5^n)
+            decay_factor = 2.0 * (1.0 - 0.5 ** n)
+            for attr_key, base_bonus in bonus_map.items():
+                try:
+                    b = float(base_bonus)
+                except Exception:
+                    continue
+                result[str(attr_key)] = result.get(str(attr_key), 0.0) + b * decay_factor
+        self._inventory_passive_attrs = result
+        # 被动经验加成（线性叠加，不衰减）
+        exp_bonus = 0.0
+        for item_id, count in self.profile.inventory.items():
+            item_info = self.item_registry.get(item_id)
+            if not item_info:
+                continue
+            raw_peb = item_info.get("passive_exp_bonus")
+            if raw_peb is None:
+                continue
+            try:
+                exp_bonus += float(raw_peb) * max(1, int(count))
+            except Exception:
+                pass
+        self._inventory_passive_exp_bonus = exp_bonus
+
+    def _effective_attr(self, attr_key: str) -> float:
+        """返回属性有效值（基础值 + 背包被动加成），用于 passive_buff / event 概率计算。"""
+        return self.profile.attrs.get(attr_key, 0.0) + self._inventory_passive_attrs.get(attr_key, 0.0)
+
     def remove_item(self, item_id: str, count: int = 1) -> bool:
         current = self.profile.inventory.get(item_id, 0)
         delta = max(1, int(count))
@@ -1373,6 +1607,7 @@ class LifeSystem:
             self.profile.inventory.pop(item_id, None)
         else:
             self.profile.inventory[item_id] = left
+        self._recompute_inventory_passive_attrs()
         return True
 
     def get_inventory_snapshot(self) -> list[dict[str, Any]]:
@@ -1389,19 +1624,22 @@ class LifeSystem:
                     "classes": list(item_info.get("_classes", [])),
                     "desc": self._resolve_record_desc(item_info),
                     "usable": bool(item_info.get("usable", True)),
+                    "unique": bool(item_info.get("unique", False)),
                     "count": int(count),
                     "cooldown_remaining": cooldown_remaining,
                     "on_cooldown": cooldown_remaining > 0,
                     "can_use": can,
                     "block_reason": reason,
                     "tags": list(item_info.get("tags") or []),
+                    "passive_attr_bonus": dict(item_info.get("passive_attr_bonus") or {}),
+                    "min_level": item_info.get("min_level"),
                 }
             )
         return snapshot
 
     def can_use_item_with_reason(self, item_id: str) -> tuple[bool, str]:
         """检查物品是否可用，返回 (可否, 原因代码)。
-        原因代码：not_found | not_usable | dead | on_cooldown | missing_buff:{id} | has_buff:{id} | tag_restricted
+        原因代码：not_found | not_usable | dead | on_cooldown | missing_buff:{id} | has_buff:{id} | tag_restricted:{tag_id}
         """
         item = self.item_registry.get(item_id)
         if not item:
@@ -1433,14 +1671,25 @@ class LifeSystem:
                 if bid and bid in active_ids:
                     return False, f"has_buff:{bid}"
 
-        # 检查标签注册表的限制：若标签关联的 buff 处于活跃状态，物品必须拥有该标签
+        # 检查标签注册表的限制：若标签关联的 buff 处于活跃状态，且标签为 global_event，物品必须拥有该标签
         item_tags: set[str] = set(item.get("tags") or [])
         active_ids = active_ids if active_ids else {e.effect_id for e in self.profile.active_effects}
         for tag_id, tag_def in self.tag_registry.items():
+            if not bool(tag_def.get("global_event", False)):
+                continue
             linked_buff = str(tag_def.get("buff_id") or "").strip()
             if linked_buff and linked_buff in active_ids:
                 if tag_id not in item_tags:
-                    return False, "tag_restricted"
+                    return False, f"tag_restricted:{tag_id}"
+
+        # 最低使用等级
+        min_level = item.get("min_level")
+        if min_level is not None:
+            try:
+                if self.profile.level < int(min_level):
+                    return False, "level_too_low"
+            except Exception:
+                pass
 
         return True, ""
 
@@ -1449,22 +1698,29 @@ class LifeSystem:
         return can
 
     def get_item_fail_message(self, item_id: str, reason: str) -> str | None:
-        """从物品 json 的 fail_messages 中查找对应原因的自定义文本，支持前缀通配匹配。"""
+        """从物品 json 的 fail_messages 中查找对应原因的自定义文本，支持前缀通配匹配。
+        对 tag_restricted:{tag_id} 原因额外回查标签注册表的 use_restricted_i18n_key。"""
         item = self.item_registry.get(item_id)
-        if not item:
-            return None
-        fail_messages = item.get("fail_messages")
-        if not isinstance(fail_messages, dict):
-            return None
-        if reason in fail_messages:
-            return str(fail_messages[reason])
-        colon_idx = reason.find(":")
-        if colon_idx >= 0:
-            prefix = reason[:colon_idx]
-            if f"{prefix}:*" in fail_messages:
-                return str(fail_messages[f"{prefix}:*"])
-            if prefix in fail_messages:
-                return str(fail_messages[prefix])
+        if item:
+            fail_messages = item.get("fail_messages")
+            if isinstance(fail_messages, dict):
+                if reason in fail_messages:
+                    return str(fail_messages[reason])
+                colon_idx = reason.find(":")
+                if colon_idx >= 0:
+                    prefix = reason[:colon_idx]
+                    if f"{prefix}:*" in fail_messages:
+                        return str(fail_messages[f"{prefix}:*"])
+                    if prefix in fail_messages:
+                        return str(fail_messages[prefix])
+        # 标签限制：从标签注册表读取 use_restricted_i18n_key
+        if reason.startswith("tag_restricted:"):
+            tag_id = reason[len("tag_restricted:"):]
+            tag_def = self.tag_registry.get(tag_id)
+            if tag_def:
+                i18n_key = str(tag_def.get("use_restricted_i18n_key") or "").strip()
+                if i18n_key:
+                    return tr(i18n_key)
         return None
 
     def get_item_cooldown_remaining(self, item_id: str) -> float:
@@ -1708,6 +1964,33 @@ class LifeSystem:
                 )
             )
 
+        # exp 字段：使用物品/事件结果时获得全局经验
+        exp_gain = record.get("exp")
+        if exp_gain is not None:
+            try:
+                gain = float(exp_gain)
+                if gain != 0.0:
+                    self.profile.exp = max(0.0, self.profile.exp + gain)
+                    self._process_char_levelup()
+            except Exception:
+                pass
+
+        # permanent_attr_delta 字段：永久属性修正
+        perm_delta = record.get("permanent_attr_delta")
+        if isinstance(perm_delta, dict):
+            for attr_key, delta_val in perm_delta.items():
+                try:
+                    delta = float(delta_val)
+                    self.profile.permanent_attr_delta[str(attr_key)] = (
+                        self.profile.permanent_attr_delta.get(str(attr_key), 0.0) + delta
+                    )
+                    # 同时将永久修正写入 attrs（使其对实际数值生效）
+                    self.profile.attrs[str(attr_key)] = (
+                        self.profile.attrs.get(str(attr_key), 0.0) + delta
+                    )
+                except Exception:
+                    pass
+
         self._refresh_attr_range_effects()
 
         _log.DEBUG(f"[Life]应用{source}: {record_id}")
@@ -1803,6 +2086,7 @@ class LifeSystem:
         self._sync_managed_state_buffs()
         self._tick_passive_buffs()
         self._refresh_attr_range_effects()
+        self._tick_exp()
 
         # 死亡检测：hp ≤ 0 且当前不处于死亡状态
         if not self.is_dead and "hp" in self.profile.states:
@@ -1848,13 +2132,140 @@ class LifeSystem:
                         break
                 if not cond_ok:
                     continue
-            # 计算有效触发概率（基础概率 + 属性加成）
+            # 计算有效概率 = 基础概率 + 属性加成
             base_chance = float(record.get("base_chance", 0.0))
             attr_bonus_map = record.get("attr_bonus")
             bonus = 0.0
             if isinstance(attr_bonus_map, dict):
                 for attr_key, bonus_per_point in attr_bonus_map.items():
                     attr_val = self.profile.attrs.get(str(attr_key), 0.0)
+                    try:
+                        bonus += float(attr_val) * float(bonus_per_point)
+                    except Exception:
+                        pass
+            effective_chance = max(0.0, base_chance + bonus)
+            if effective_chance <= 0.0:
+                continue
+            # 随机触发
+            if random.random() * 100.0 < effective_chance:
+                on_trigger = record.get("on_trigger")
+                if isinstance(on_trigger, dict):
+                    buff_id = str(on_trigger.get("buff_id") or "").strip()
+                    if buff_id:
+                        self.apply_buff(buff_id)
+                    else:
+                        # on_trigger 直接是 buff-like 效果描述时，直接应用
+                        self._apply_record(on_trigger, source="passive_buff")
+                _log.DEBUG(f"[Life][passive_buff]触发: {pb_id}")
+
+    def _tick_exp(self) -> None:
+        """每 tick 增加被动经验并处理升级。满级后经验继续积累但不再触发升级。"""
+        if self.is_dead:
+            return
+        passive = self._passive_exp_per_tick + self._inventory_passive_exp_bonus
+        if passive > 0:
+            self.profile.exp = min(_EXP_MAX, max(0.0, self.profile.exp + passive))
+            if self.profile.level < self._max_level:
+                self._process_char_levelup()
+
+    def _process_char_levelup(self) -> None:
+        """检查全局等级经验是否达到升级阈值，连续升级直到不足为止。
+        满级时经验继续积累，不截断，不变负。
+        """
+        while self.profile.level < self._max_level:
+            required = self._exp_table.get(self.profile.level)
+            if required is None or self.profile.exp < required:
+                break
+            self.profile.exp = max(0.0, self.profile.exp - required)
+            self.profile.level += 1
+            self._apply_char_level_attr_bonus(self.profile.level)
+            _log.DEBUG(f"[Life][Level]升级: Lv.{self.profile.level} 剩余经验={self.profile.exp:.2f}")
+        # 保证经验值永远非负且不超上限
+        self.profile.exp = min(_EXP_MAX, max(0.0, self.profile.exp))
+
+    def _apply_char_level_attr_bonus(self, new_level: int) -> None:
+        """根据 attrs.json 中的 char_level_bonuses 计算并应用升级到 new_level 时的属性加成。"""
+        for attr_id, defn in self.attr_definitions.items():
+            char_level_bonuses = defn.get("char_level_bonuses")
+            if not isinstance(char_level_bonuses, list):
+                continue
+            for bonus_entry in char_level_bonuses:
+                if not isinstance(bonus_entry, dict):
+                    continue
+                b_type = str(bonus_entry.get("type") or "").strip()
+                b_bonus: dict[str, float] = bonus_entry.get("bonus") or {}
+                if not isinstance(b_bonus, dict):
+                    continue
+
+                apply = False
+                if b_type == "at_level":
+                    apply = (new_level == int(bonus_entry.get("level", -1)))
+                elif b_type == "per_levels":
+                    every = int(bonus_entry.get("every", 0))
+                    if every <= 0:
+                        continue
+                    offset = int(bonus_entry.get("min_level_offset", 0))
+                    # 实际首次触发等级 = offset + every + 1
+                    first_trigger = offset + every + 1
+                    if new_level >= first_trigger:
+                        apply = ((new_level - offset - 1) % every == 0)
+
+                if apply:
+                    for bonus_attr, bonus_val in b_bonus.items():
+                        try:
+                            delta = float(bonus_val)
+                        except Exception:
+                            continue
+                        if bonus_attr in self.profile.attrs:
+                            self.profile.attrs[bonus_attr] += delta
+                            _log.DEBUG(f"[Life][Level]等级修正 Lv.{new_level}: {bonus_attr}+{delta}")
+
+
+        """每 tick 检测被动 buff 触发条件，按概率随机激活。"""
+        if not self.passive_buff_registry:
+            return
+        active_ids = {e.effect_id for e in self.profile.active_effects}
+        for pb_id, record in self.passive_buff_registry.items():
+            # requires_buff 条件（列表中任意一个存在即满足）
+            rb = record.get("requires_buff")
+            if rb is not None:
+                check_ids = [rb] if isinstance(rb, str) else list(rb)
+                if not any(str(bid) in active_ids for bid in check_ids if bid):
+                    continue
+            # requires_no_buff 条件（列表中任意一个存在则跳过）
+            rnb = record.get("requires_no_buff")
+            if rnb is not None:
+                check_ids = [rnb] if isinstance(rnb, str) else list(rnb)
+                if any(str(bid) in active_ids for bid in check_ids if bid):
+                    continue
+            # attr_conditions 条件（全部满足才继续）
+            attr_conds = record.get("attr_conditions")
+            if isinstance(attr_conds, list):
+                cond_ok = True
+                for cond in attr_conds:
+                    if not isinstance(cond, dict):
+                        continue
+                    attr_key = str(cond.get("attr") or "").strip()
+                    if not attr_key:
+                        continue
+                    attr_val = self._effective_attr(attr_key)
+                    cond_min = cond.get("min")
+                    cond_max = cond.get("max")
+                    if cond_min is not None and attr_val < float(cond_min):
+                        cond_ok = False
+                        break
+                    if cond_max is not None and attr_val > float(cond_max):
+                        cond_ok = False
+                        break
+                if not cond_ok:
+                    continue
+            # 计算有效触发概率（基础概率 + 属性加成）
+            base_chance = float(record.get("base_chance", 0.0))
+            attr_bonus_map = record.get("attr_bonus")
+            bonus = 0.0
+            if isinstance(attr_bonus_map, dict):
+                for attr_key, bonus_per_point in attr_bonus_map.items():
+                    attr_val = self._effective_attr(str(attr_key))
                     try:
                         bonus += float(attr_val) * float(bonus_per_point)
                     except Exception:
@@ -2404,7 +2815,7 @@ class LifeSystem:
         return snapshot
 
     def get_attr_snapshot(self) -> list[dict[str, Any]]:
-        """返回每个属性的值分解快照：基础值、永久修正、效果修正、颜色、经验、等级。"""
+        """返回每个属性的值分解快照：基础值、永久修正、效果修正、等级修正、颜色、经验、等级。"""
         attr_keys = self.attr_keys
         effect_deltas: dict[str, float] = {k: 0.0 for k in attr_keys}
         for effect in self.profile.active_effects:
@@ -2421,7 +2832,11 @@ class LifeSystem:
             name = tr(i18n_key, default=str(defn.get("name", attr)))
             current = float(self.profile.attrs.get(attr, 0.0))
             effect_delta = effect_deltas.get(attr, 0.0)
-            permanent_delta = current - base - effect_delta
+            item_permanent_delta = float(self.profile.permanent_attr_delta.get(attr, 0.0))
+            # level_bonus：用于展示，从当前 profile.attrs 中反推全局等级贡献
+            level_bonus = self._compute_char_level_attr_bonus(attr, self.profile.level)
+            # permanent_delta = 总变化 - effect修正 - 物品永久修正 - 等级修正（剩余为属性经验/升级带来的永久修正）
+            permanent_delta = current - base - effect_delta - item_permanent_delta - level_bonus
             current_exp = float(self.profile.attr_exp.get(attr, 0.0))
             current_level = int(self.profile.attr_level.get(attr, 0))
             level_table = defn.get("level_table", [])
@@ -2431,6 +2846,7 @@ class LifeSystem:
                     if lt_entry.get("level", 0) > current_level:
                         next_exp_required = float(lt_entry["exp_required"])
                         break
+            inventory_bonus = self._inventory_passive_attrs.get(attr, 0.0)
             result.append({
                 "id": attr,
                 "name": name,
@@ -2439,11 +2855,47 @@ class LifeSystem:
                 "base": base,
                 "permanent_delta": permanent_delta,
                 "effect_delta": effect_delta,
+                "inventory_bonus": inventory_bonus,
                 "exp": current_exp,
                 "level": current_level,
                 "next_exp_required": next_exp_required,
+                "level_bonus": level_bonus,
+                "item_permanent_delta": item_permanent_delta,
             })
         return result
+
+    def _compute_char_level_attr_bonus(self, attr_id: str, current_level: int) -> float:
+        """计算全局等级 1~current_level 累计带来的属性 attr_id 加成（仅用于展示分层）。"""
+        defn = self.attr_definitions.get(attr_id, {})
+        char_level_bonuses = defn.get("char_level_bonuses")
+        if not isinstance(char_level_bonuses, list):
+            return 0.0
+        total = 0.0
+        for bonus_entry in char_level_bonuses:
+            if not isinstance(bonus_entry, dict):
+                continue
+            b_type = str(bonus_entry.get("type") or "").strip()
+            b_bonus: dict = bonus_entry.get("bonus") or {}
+            if not isinstance(b_bonus, dict) or attr_id not in b_bonus:
+                continue
+            try:
+                bonus_val = float(b_bonus[attr_id])
+            except Exception:
+                continue
+            if b_type == "at_level":
+                trigger_level = int(bonus_entry.get("level", -1))
+                if 1 <= trigger_level <= current_level:
+                    total += bonus_val
+            elif b_type == "per_levels":
+                every = int(bonus_entry.get("every", 0))
+                if every <= 0:
+                    continue
+                offset = int(bonus_entry.get("min_level_offset", 0))
+                first_trigger = offset + every + 1
+                if current_level >= first_trigger:
+                    count = (current_level - offset - 1) // every
+                    total += bonus_val * count
+        return total
 
     def gain_attr_exp(self, attr_id: str, amount: float) -> list[dict[str, Any]]:
         """给指定属性增加经验值，触发升级和永久加成。返回本次升级事件列表。"""
@@ -2603,32 +3055,51 @@ class LifeSystem:
                 bid = str(bid).strip()
                 if bid and bid in active_ids:
                     return False, f"has_buff:{bid}"
-        # 检查标签注册表的限制：若标签关联的 buff 处于活跃状态，触发器必须拥有该标签
+        # 检查标签注册表的限制：若标签关联的 buff 处于活跃状态，且标签为 global_event，触发器必须拥有该标签
         trigger_tags: set[str] = set(trigger.get("tags") or [])
         for tag_id, tag_def in self.tag_registry.items():
+            if not bool(tag_def.get("global_event", False)):
+                continue
             linked_buff = str(tag_def.get("buff_id") or "").strip()
             if linked_buff and linked_buff in active_ids:
                 if tag_id not in trigger_tags:
-                    return False, "tag_restricted"
+                    return False, f"tag_restricted:{tag_id}"
+
+        # 最低触发等级
+        min_level = trigger.get("min_level")
+        if min_level is not None:
+            try:
+                if self.profile.level < int(min_level):
+                    return False, "level_too_low"
+            except Exception:
+                pass
+
         return True, ""
 
     def get_trigger_fail_message(self, trigger_id: str, reason: str) -> str | None:
-        """从触发器 json 的 fail_messages 中查找对应原因的自定义文本，支持前缀通配匹配。"""
+        """从触发器 json 的 fail_messages 中查找对应原因的自定义文本，支持前缀通配匹配。
+        对 tag_restricted:{tag_id} 原因额外回查标签注册表的 fire_restricted_i18n_key。"""
         trigger = self.event_trigger_registry.get(trigger_id)
-        if not trigger:
-            return None
-        fail_messages = trigger.get("fail_messages")
-        if not isinstance(fail_messages, dict):
-            return None
-        if reason in fail_messages:
-            return str(fail_messages[reason])
-        colon_idx = reason.find(":")
-        if colon_idx >= 0:
-            prefix = reason[:colon_idx]
-            if f"{prefix}:*" in fail_messages:
-                return str(fail_messages[f"{prefix}:*"])
-            if prefix in fail_messages:
-                return str(fail_messages[prefix])
+        if trigger:
+            fail_messages = trigger.get("fail_messages")
+            if isinstance(fail_messages, dict):
+                if reason in fail_messages:
+                    return str(fail_messages[reason])
+                colon_idx = reason.find(":")
+                if colon_idx >= 0:
+                    prefix = reason[:colon_idx]
+                    if f"{prefix}:*" in fail_messages:
+                        return str(fail_messages[f"{prefix}:*"])
+                    if prefix in fail_messages:
+                        return str(fail_messages[prefix])
+        # 标签限制：从标签注册表读取 fire_restricted_i18n_key
+        if reason.startswith("tag_restricted:"):
+            tag_id = reason[len("tag_restricted:"):]
+            tag_def = self.tag_registry.get(tag_id)
+            if tag_def:
+                i18n_key = str(tag_def.get("fire_restricted_i18n_key") or "").strip()
+                if i18n_key:
+                    return tr(i18n_key)
         return None
 
     def get_trigger_executing_remaining(self, trigger_id: str) -> float:
@@ -2782,7 +3253,7 @@ class LifeSystem:
             bonus = 0.0
             if isinstance(attr_bonus, dict):
                 for attr_key, bonus_per_point in attr_bonus.items():
-                    attr_val = self.profile.attrs.get(str(attr_key), 0.0)
+                    attr_val = self._effective_attr(str(attr_key))
                     try:
                         bonus += float(attr_val) * float(bonus_per_point)
                     except Exception:
@@ -3001,6 +3472,10 @@ class LifeSystem:
             "attr_exp": dict(self.profile.attr_exp),
             "attr_level": dict(self.profile.attr_level),
             "attr_base": dict(self.profile.attr_base),
+            # 全局等级系统
+            "level": self.profile.level,
+            "exp": self.profile.exp,
+            "permanent_attr_delta": dict(self.profile.permanent_attr_delta),
         }
 
     def load_profile(self, data: dict[str, Any]) -> None:
@@ -3046,6 +3521,26 @@ class LifeSystem:
                     self.profile.attr_base[str(k)] = float(v)
                 except Exception:
                     pass
+        # 全局等级系统恢复（向后兼容，旧存档无该字段时使用默认值）
+        try:
+            self.profile.level = max(1, int(data.get("level", 1)))
+        except Exception:
+            self.profile.level = 1
+        try:
+            self.profile.exp = max(0.0, float(data.get("exp", 0.0)))
+        except Exception:
+            self.profile.exp = 0.0
+        raw_perm = data.get("permanent_attr_delta", {})
+        if isinstance(raw_perm, dict):
+            for k, v in raw_perm.items():
+                try:
+                    self.profile.permanent_attr_delta[str(k)] = float(v)
+                except Exception:
+                    pass
+        # 满级 clamp（存档等级可能高于当前配置最高等级）
+        if self.profile.level > self._max_level:
+            self.profile.level = self._max_level
+
         parsed_inventory: dict[str, int] = {}
         raw_inventory = data.get("inventory", {})
         if isinstance(raw_inventory, dict):
@@ -3116,6 +3611,8 @@ class LifeSystem:
             if r > 0:
                 self._trigger_executing[str(trigger_id)] = now + r
 
+        self._recompute_inventory_passive_attrs()
+
     def reset_profile(self) -> None:
         """清除所有当前养成数据，恢复到默认初始状态并保存存档。"""
         self._static_cap_modifiers.clear()
@@ -3142,3 +3639,56 @@ class LifeSystem:
             return False
         self.load_profile(payload)
         return True
+
+    _EXPORT_FORMAT_VERSION = 1
+    _IMPORT_MAX_BYTES = 4 * 1024 * 1024  # 4 MB
+
+    def export_profile(self, file_path: str | Path) -> tuple[bool, str]:
+        """将当前养成数据导出为 JSON 文件。\n\n返回 (True, "") 或 (False, 错误原因)。"""
+        try:
+            path = Path(file_path)
+            export_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            payload = {
+                "meta": {
+                    "format_version": self._EXPORT_FORMAT_VERSION,
+                    "export_time": export_time,
+                    "character_name": self.character_name,
+                },
+                "profile": self.dump_profile(),
+            }
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            _log.INFO(f"[Life]存档已导出: {path}")
+            return True, ""
+        except Exception as exc:
+            _log.WARN(f"[Life]存档导出失败: {exc}")
+            return False, str(exc)
+
+    def import_profile(self, file_path: str | Path) -> tuple[bool, str]:
+        """从 JSON 文件导入养成存档。\n\n返回 (True, "") 或 (False, 错误原因)。"""
+        try:
+            path = Path(file_path)
+            if not path.is_file():
+                return False, f"文件不存在: {path}"
+            size = path.stat().st_size
+            if size > self._IMPORT_MAX_BYTES:
+                mb = size / (1024 * 1024)
+                return False, f"文件过大 ({mb:.1f} MB)，导入上限为 4 MB"
+            text = path.read_text(encoding="utf-8")
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                return False, "文件格式错误：根对象必须是 JSON 对象"
+            if "profile" not in data:
+                return False, "文件缺少必要的 'profile' 字段"
+            meta = data.get("meta", {})
+            fmt_ver = meta.get("format_version") if isinstance(meta, dict) else None
+            if fmt_ver != self._EXPORT_FORMAT_VERSION:
+                return False, f"存档版本不兼容 (format_version={fmt_ver!r})，无法导入"
+            self.load_profile(data["profile"])
+            _log.INFO(f"[Life]存档已导入: {path}")
+            return True, ""
+        except json.JSONDecodeError as exc:
+            _log.WARN(f"[Life]存档导入失败（JSON 解析错误）: {exc}")
+            return False, f"JSON 解析错误: {exc}"
+        except Exception as exc:
+            _log.WARN(f"[Life]存档导入失败: {exc}")
+            return False, str(exc)

@@ -124,6 +124,7 @@ class HoverDetailProgressBar(QProgressBar):
         self._legacy_percent_value: float = 0.0
         self.setMouseTracking(True)
         self._popup = ValueHoverPopup()
+        self._last_global_pos: QPoint = QPoint()
         self._base_fill_ratio: float = 0.0
         self._base_cap_ratio: float = 1.0
         self._overflow_enabled = False
@@ -157,6 +158,11 @@ class HoverDetailProgressBar(QProgressBar):
         self._legacy_fixed_delta = float(fixed_delta)
         self._legacy_percent_delta = float(percent_delta)
         self._legacy_percent_value = float(percent_value)
+        self._refresh_popup_if_visible()
+
+    def _refresh_popup_if_visible(self) -> None:
+        if self._popup.isVisible() and not self._last_global_pos.isNull():
+            self._show_detail_popup(self._last_global_pos)
 
     def set_state_payload(self, payload: dict[str, Any]) -> None:
         self._detail = dict(payload)
@@ -178,6 +184,7 @@ class HoverDetailProgressBar(QProgressBar):
             self._overflow_fill_ratio = 0.0
 
         self.update()
+        self._refresh_popup_if_visible()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -294,11 +301,13 @@ class HoverDetailProgressBar(QProgressBar):
         )
 
     def enterEvent(self, event):
-        self._show_detail_popup(self.mapToGlobal(event.position().toPoint()))
+        self._last_global_pos = self.mapToGlobal(event.position().toPoint())
+        self._show_detail_popup(self._last_global_pos)
         return super().enterEvent(event)
 
     def mouseMoveEvent(self, event):
-        self._show_detail_popup(event.globalPosition().toPoint())
+        self._last_global_pos = event.globalPosition().toPoint()
+        self._show_detail_popup(self._last_global_pos)
         return super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):

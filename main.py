@@ -5,6 +5,7 @@ from ui.ErrorDialog import ErrorDialog
 from util.log import _log
 from resources.image_resources import get_available_resource_packs, get_resource_pack_display_name, set_resource_pack
 from util.cfg import init_config_dir, load_config, save_config
+from util.i18n import attach_mod_lang_dirs_early
 
 from warnings import filterwarnings
 filterwarnings("ignore", category=DeprecationWarning)
@@ -35,6 +36,12 @@ if __name__ == "__main__":
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     init_config_dir()
+
+    # 在任何 UI 模块导入之前加载 mod 语言文件，
+    # 确保 class-level tab_name = tr(...) 能获取到 mod 翻译。
+    _mod_lang_count = attach_mod_lang_dirs_early()
+    if _mod_lang_count:
+        _log.INFO(f"[i18n]提前加载了 {_mod_lang_count} 个 mod 语言目录")
 
     basic_config = load_config("basic")
     use_auto_pack = bool(basic_config.get("auto_load_resource_pack", False))
@@ -87,11 +94,22 @@ if __name__ == "__main__":
             _log.INFO(f"已设置默认资源包: {selected_pack}")
 
     from ui.PetWindow import PetWindow, app
-    from module.life.runtime import start_life_loop
+    from module.life.runtime import start_life_loop, configure_tick_intervals, load_mods
     from register import registerInit
     from Event.setting.system import ShowApp
 
+    debug_cfg = load_config("debug")
+    normal_ms = int(debug_cfg.get("life_tick_interval_ms", 1000))
+    afk_ms = int(debug_cfg.get("life_afk_tick_interval_ms", 5000))
+    afk_timeout_s = int(debug_cfg.get("life_afk_timeout_s", 3600))
+    configure_tick_intervals(normal_ms, afk_ms)
+
     registerInit()
-    start_life_loop(app, interval_ms=1000)
+    start_life_loop(app, interval_ms=normal_ms)
+    load_mods()
+
+    from util.idle_monitor import IdleMonitor
+    IdleMonitor.start(app, afk_timeout_s=afk_timeout_s)
+
     QTimer.singleShot(0, lambda: ShowApp(PetWindow))
     sys.exit(app.exec())

@@ -195,6 +195,8 @@ class UnifiedSettingsWindow(QDialog):
                 reset_callback=self._reset_life,
                 feedback_callback=self._set_feedback,
                 is_dead_getter=self._is_life_dead,
+                export_callback=self._export_life,
+                import_callback=self._import_life,
             ),
             AboutTab.tab_name: AboutTab(),
         }
@@ -448,6 +450,13 @@ class UnifiedSettingsWindow(QDialog):
             self.tab_widgets[tab_name].setVisible(True)
 
         self.active_tab = tab_name
+
+        # 切换到基础设置时刷新语言列表（mod 加载后可能新增语言）
+        if tab_name == BasicSettingsTab.tab_name:
+            tab_widget = self.tab_widgets.get(tab_name)
+            if hasattr(tab_widget, "refresh_locale_combo"):
+                tab_widget.refresh_locale_combo()
+
         self._set_feedback()
         self._update_bottom_actions()
 
@@ -536,6 +545,18 @@ class UnifiedSettingsWindow(QDialog):
     def _reset_life(self) -> None:
         from module.life.runtime import get_life_system
         get_life_system().reset_profile()
+
+    def _export_life(self, file_path: str) -> tuple[bool, str]:
+        from module.life.runtime import get_life_system
+        return get_life_system().export_profile(file_path)
+
+    def _import_life(self, file_path: str) -> tuple[bool, str]:
+        from module.life.runtime import get_life_system
+        life = get_life_system()
+        ok, err = life.import_profile(file_path)
+        if ok:
+            life.save("default")
+        return ok, err
 
     def _open_life_window(self):
         from ui.life import LifeWindow

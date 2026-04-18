@@ -194,6 +194,71 @@ class DebugTab(QFrame):
         quick_action_row.addStretch()
         action_layout.addLayout(quick_action_row)
 
+        # ---- 休眠模式卡片 -------------------------------------------------- #
+        debug_config2 = load_config("debug")
+        initial_normal_tick_s = int(debug_config2.get("life_tick_interval_ms", 1000)) // 1000
+        initial_afk_tick_s = int(debug_config2.get("life_afk_tick_interval_ms", 5000)) // 1000
+        initial_afk_timeout_s = int(debug_config2.get("life_afk_timeout_s", 3600)) // 60  # 显示为分钟
+
+        hibernate_card = create_section_card(
+            tr("settings.debug.card.hibernate.title"),
+            tr("settings.debug.card.hibernate.desc"),
+        )
+        hibernate_layout = hibernate_card.layout()
+
+        normal_tick_row = QHBoxLayout()
+        normal_tick_row.setSpacing(ROW_SPACING)
+        normal_tick_label = QLabel(tr("settings.debug.tick_interval_normal"))
+        normal_tick_label.setObjectName("fieldLabel")
+        normal_tick_label.setFixedWidth(LABEL_WIDTH)
+        normal_tick_row.addWidget(normal_tick_label)
+        self.normal_tick_spin = QSpinBox()
+        self.normal_tick_spin.setRange(1, 60)
+        self.normal_tick_spin.setValue(max(1, initial_normal_tick_s))
+        self.normal_tick_spin.setSuffix(" s")
+        self.normal_tick_spin.setFixedWidth(INPUT_WIDTH)
+        self.normal_tick_spin.setAlignment(Qt.AlignRight)
+        normal_tick_row.addWidget(self.normal_tick_spin)
+        normal_tick_row.addStretch()
+        hibernate_layout.addLayout(normal_tick_row)
+
+        afk_tick_row = QHBoxLayout()
+        afk_tick_row.setSpacing(ROW_SPACING)
+        afk_tick_label = QLabel(tr("settings.debug.tick_interval_afk"))
+        afk_tick_label.setObjectName("fieldLabel")
+        afk_tick_label.setFixedWidth(LABEL_WIDTH)
+        afk_tick_row.addWidget(afk_tick_label)
+        self.afk_tick_spin = QSpinBox()
+        self.afk_tick_spin.setRange(1, 600)
+        self.afk_tick_spin.setValue(max(1, initial_afk_tick_s))
+        self.afk_tick_spin.setSuffix(" s")
+        self.afk_tick_spin.setFixedWidth(INPUT_WIDTH)
+        self.afk_tick_spin.setAlignment(Qt.AlignRight)
+        afk_tick_row.addWidget(self.afk_tick_spin)
+        afk_tick_row.addStretch()
+        hibernate_layout.addLayout(afk_tick_row)
+
+        afk_timeout_row = QHBoxLayout()
+        afk_timeout_row.setSpacing(ROW_SPACING)
+        afk_timeout_label = QLabel(tr("settings.debug.afk_timeout"))
+        afk_timeout_label.setObjectName("fieldLabel")
+        afk_timeout_label.setFixedWidth(LABEL_WIDTH)
+        afk_timeout_row.addWidget(afk_timeout_label)
+        self.afk_timeout_spin = QSpinBox()
+        self.afk_timeout_spin.setRange(1, 1440)
+        self.afk_timeout_spin.setValue(max(1, initial_afk_timeout_s))
+        self.afk_timeout_spin.setSuffix(" min")
+        self.afk_timeout_spin.setFixedWidth(INPUT_WIDTH)
+        self.afk_timeout_spin.setAlignment(Qt.AlignRight)
+        afk_timeout_row.addWidget(self.afk_timeout_spin)
+        afk_timeout_row.addStretch()
+        hibernate_layout.addLayout(afk_timeout_row)
+
+        layout.addWidget(hibernate_card)
+        layout.addStretch()
+
+        # 扩展调试，放在调试标签最后一项
+
         expansion_card = create_section_card(
             tr("settings.debug.card.expansion.title"),
             tr("settings.debug.card.expansion.desc"),
@@ -218,7 +283,6 @@ class DebugTab(QFrame):
         layout.addWidget(debug_card)
         layout.addWidget(action_card)
         layout.addWidget(expansion_card)
-        layout.addStretch()
 
     def save_tab(self):
         """保存调试标签配置"""
@@ -227,5 +291,18 @@ class DebugTab(QFrame):
         config["toast_duration_ms"] = toast_duration_ms
         config["log_level"] = str(self.log_level_combo.currentData() or "INFO").upper()
         config["log_max_file_size_mb"] = max(1, int(self.log_size_spin.value()))
+        config["life_tick_interval_ms"] = max(100, self.normal_tick_spin.value() * 1000)
+        config["life_afk_tick_interval_ms"] = max(100, self.afk_tick_spin.value() * 1000)
+        config["life_afk_timeout_s"] = max(60, self.afk_timeout_spin.value() * 60)
         save_config("debug", config)
+
+        # 立即应用新的 tick 间隔和 AFK 超时
+        from module.life.runtime import configure_tick_intervals
+        from util.idle_monitor import IdleMonitor
+        configure_tick_intervals(
+            config["life_tick_interval_ms"],
+            config["life_afk_tick_interval_ms"],
+        )
+        IdleMonitor.reconfigure(config["life_afk_timeout_s"])
+
         return tr("settings.debug.saved")

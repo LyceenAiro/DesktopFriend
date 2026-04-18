@@ -204,6 +204,7 @@ class LifeDebugWindow(QDialog):
             tr("life.debug.tabs.effects"): self._build_effects_tab(),
             tr("life.debug.tabs.items"): self._build_items_tab(),
             tr("life.debug.tabs.values"): self._build_values_tab(),
+            tr("life.debug.tabs.exp"): self._build_exp_tab(),
         }
 
         for tab_name in self.tab_widgets.keys():
@@ -262,9 +263,6 @@ class LifeDebugWindow(QDialog):
         save_btn.clicked.connect(self._save)
         row.addWidget(save_btn)
 
-        load_btn = QPushButton(tr("life.debug.load_profile"))
-        load_btn.clicked.connect(self._load)
-        row.addWidget(load_btn)
         row.addStretch()
 
         card_layout.addLayout(row)
@@ -433,6 +431,57 @@ class LifeDebugWindow(QDialog):
         layout.addStretch()
         return root
 
+    def _build_exp_tab(self) -> QFrame:
+        root = QFrame()
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(12)
+
+        level_card = create_section_card(
+            tr("life.debug.exp.set_level"), ""
+        )
+        level_layout = level_card.layout()
+        level_row = QHBoxLayout()
+        level_row.setSpacing(8)
+
+        self.debug_level_spin = QSpinBox()
+        self.debug_level_spin.setRange(1, max(1, self.life.max_level))
+        self.debug_level_spin.setFixedWidth(120)
+        self.debug_level_spin.setAlignment(Qt.AlignRight)
+        level_row.addWidget(self.debug_level_spin)
+
+        set_level_btn = QPushButton(tr("life.debug.exp.set_level"))
+        set_level_btn.clicked.connect(self._debug_set_level)
+        level_row.addWidget(set_level_btn)
+        level_row.addStretch()
+        level_layout.addLayout(level_row)
+        layout.addWidget(level_card)
+
+        exp_card = create_section_card(
+            tr("life.debug.exp.set_exp"), ""
+        )
+        exp_layout = exp_card.layout()
+        exp_row = QHBoxLayout()
+        exp_row.setSpacing(8)
+
+        self.debug_exp_spin = QDoubleSpinBox()
+        self.debug_exp_spin.setRange(0.0, float(2 ** 31 - 1))
+        self.debug_exp_spin.setDecimals(1)
+        self.debug_exp_spin.setSingleStep(1.0)
+        self.debug_exp_spin.setFixedWidth(160)
+        self.debug_exp_spin.setAlignment(Qt.AlignRight)
+        exp_row.addWidget(self.debug_exp_spin)
+
+        set_exp_btn = QPushButton(tr("life.debug.exp.set_exp"))
+        set_exp_btn.clicked.connect(self._debug_set_exp)
+        exp_row.addWidget(set_exp_btn)
+        exp_row.addStretch()
+        exp_layout.addLayout(exp_row)
+        layout.addWidget(exp_card)
+
+        layout.addStretch()
+        return root
+
     def switch_tab(self, tab_name: str) -> None:
         for name, btn in self.tab_buttons.items():
             btn.setStyleSheet(NAV_BUTTON_ACTIVE_STYLE if name == tab_name else NAV_BUTTON_STYLE)
@@ -446,6 +495,8 @@ class LifeDebugWindow(QDialog):
         self._set_feedback()
         if tab_name == tr("life.debug.tabs.values"):
             self._sync_value_editors_from_profile()
+        if tab_name == tr("life.debug.tabs.exp"):
+            self._sync_exp_editors_from_profile()
 
     def _set_feedback(self, message: str = "", level: str = "info") -> None:
         if not message:
@@ -567,7 +618,10 @@ class LifeDebugWindow(QDialog):
         return spinbox.hasFocus()
 
     def _is_value_editor_busy(self) -> bool:
-        return self._is_spinbox_editing(self.state_value_spin) or self._is_spinbox_editing(self.nutrition_value_spin)
+        return (
+            self._is_spinbox_editing(self.state_value_spin)
+            or self._is_spinbox_editing(self.nutrition_value_spin)
+        )
 
     def _tick_once(self):
         self.life.tick()
@@ -729,6 +783,7 @@ class LifeDebugWindow(QDialog):
         self._reload_item_selectors(force=not from_timer)
         self._reload_value_selectors(force=(not from_timer) and (not value_editor_busy))
 
+        # EXP tab 不参与自动刷新，只在切换进入时同步一次
         scroll = self.state_text.verticalScrollBar()
         prev_value = scroll.value()
         was_at_bottom = prev_value >= max(0, scroll.maximum() - 2)
@@ -764,7 +819,30 @@ class LifeDebugWindow(QDialog):
 
         lines.append(f"\n[{tr('life.debug.section.attrs')}]")
         for k, v in self.life.profile.attrs.items():
-            lines.append(f"{k}: {v:.2f}")
+            perm = self.life.profile.permanent_attr_delta.get(k, 0.0)
+            level_bonus = self.life._compute_total_char_level_attr_bonus(k, self.life.profile.level) if hasattr(self.life, "_compute_total_char_level_attr_bonus") else 0.0
+            extra = []
+            if perm != 0.0:
+                extra.append(f"perm={perm:+.2f}")
+            if level_bonus != 0.0:
+                extra.append(f"lv_bonus={level_bonus:+.2f}")
+            suffix = f"  ({', '.join(extra)})" if extra else ""
+            lines.append(f"{k}: {v:.2f}{suffix}")
+
+        lines.append(f"\n[等级 / EXP]")
+        snap = self.life.get_level_snapshot()
+        lv = snap['level']
+        max_lv = snap['max_level']
+        exp = snap['exp']
+        req = snap.get('exp_required')
+        req_str = f"{req:.1f}" if req is not None else "满级"
+        passive_exp = snap.get('passive_exp_per_tick', 0.0)
+        lines.append(f"Lv.{lv} / {max_lv}  EXP: {exp:.1f} / {req_str}  (被动: +{passive_exp:.2f}/tick)")
+
+        if self.life.profile.permanent_attr_delta:
+            lines.append(f"\n[永久属性修正]")
+            for k, v in self.life.profile.permanent_attr_delta.items():
+                lines.append(f"{k}: {v:+.2f}")
 
         lines.append(f"\n[{tr('life.debug.section.inventory')}]")
         items = self.life.get_inventory_snapshot()
@@ -795,6 +873,26 @@ class LifeDebugWindow(QDialog):
         current_nutrition_id = str(self.nutrition_key_combo.currentData() or self.nutrition_key_combo.currentText()).strip()
         if current_nutrition_id in self.life.profile.nutrition and not self._is_value_editor_busy():
             self.nutrition_value_spin.setValue(float(self.life.profile.nutrition[current_nutrition_id]))
+
+    def _sync_exp_editors_from_profile(self):
+        self.debug_level_spin.setRange(1, max(1, self.life.max_level))
+        self.debug_level_spin.setValue(int(self.life.profile.level))
+        self.debug_exp_spin.setValue(float(self.life.profile.exp))
+
+    def _refresh_exp_status_label(self):
+        pass  # 已移除状态标签，保留方法避免旧调用报错
+
+    def _debug_set_level(self):
+        level = int(self.debug_level_spin.value())
+        self.life.set_level(level)
+        self._set_feedback(f"Lv.{self.life.profile.level}", "success")
+        self.refresh_view()
+
+    def _debug_set_exp(self):
+        exp = float(self.debug_exp_spin.value())
+        self.life.set_exp(exp)
+        self._set_feedback(f"EXP = {self.life.profile.exp:.1f}", "success")
+        self.refresh_view()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

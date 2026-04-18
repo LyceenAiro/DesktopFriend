@@ -198,7 +198,20 @@ def validate_item_record(
         issues.append(ValidationIssue("error", "usable 必须是布尔值", source, record_id, "usable"))
     if "consumable" in record and not isinstance(record["consumable"], bool):
         issues.append(ValidationIssue("error", "consumable 必须是布尔值", source, record_id, "consumable"))
-
+    if "unique" in record and not isinstance(record["unique"], bool):
+        issues.append(ValidationIssue("error", "unique 必须是布尔值", source, record_id, "unique"))
+    if "passive_attr_bonus" in record:
+        pab = record["passive_attr_bonus"]
+        if not isinstance(pab, dict):
+            issues.append(ValidationIssue("error", "passive_attr_bonus 必须是字典", source, record_id, "passive_attr_bonus"))
+        else:
+            for _ak, _av in pab.items():
+                if not isinstance(_av, (int, float)):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"passive_attr_bonus[{_ak}] 必须是数値",
+                        source, record_id, "passive_attr_bonus",
+                    ))
     if "desc" in record and not isinstance(record["desc"], str):
         issues.append(ValidationIssue("error", "desc 必须是字符串", source, record_id, "desc"))
     if "description" in record and not isinstance(record["description"], str):
@@ -222,6 +235,8 @@ def validate_item_record(
             "desc_i18n_key",
             "description_i18n_key",
             "usable",
+            "unique",
+            "passive_attr_bonus",
             "category",
             "consumable",
             "_classes",
@@ -230,7 +245,37 @@ def validate_item_record(
             "requires_no_buff",
             "tags",
             "fail_messages",
+            # 等级/经验联动（Phase 4）
+            "exp",
+            "passive_exp_bonus",
+            "min_level",
+            "permanent_attr_delta",
+            "attr_exp",
         }:
+            continue
+
+        if key == "exp":
+            if not _is_number_like(value):
+                issues.append(ValidationIssue("error", "exp 必须为数值", source, record_id, key))
+            continue
+
+        if key == "passive_exp_bonus":
+            if not _is_number_like(value):
+                issues.append(ValidationIssue("error", "passive_exp_bonus 必须为数值", source, record_id, key))
+            continue
+
+        if key == "min_level":
+            if not isinstance(value, int) or value < 0:
+                issues.append(ValidationIssue("error", "min_level 必须为非负整数", source, record_id, key))
+            continue
+
+        if key == "permanent_attr_delta":
+            if not isinstance(value, dict):
+                issues.append(ValidationIssue("error", "permanent_attr_delta 必须是字典", source, record_id, key))
+            else:
+                for _k, _v in value.items():
+                    if not isinstance(_v, (int, float)):
+                        issues.append(ValidationIssue("error", f"permanent_attr_delta[{_k}] 必须为数值", source, record_id, key))
             continue
 
         if key == "cooldown_s":
@@ -422,10 +467,18 @@ def validate_event_trigger_record(
         "requires_buff", "requires_no_buff",
         "tags", "fail_messages",
         "_classes",
+        # 等级/经验联动（Phase 4）
+        "exp", "min_level",
     }
     for key in record:
         if key not in known_keys:
             issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    # min_level 合法性
+    if "min_level" in record and (not isinstance(record["min_level"], int) or record["min_level"] < 0):
+        issues.append(ValidationIssue("error", "min_level 必须为非负整数", source, record_id, "min_level"))
+    if "exp" in record and not _is_number_like(record["exp"]):
+        issues.append(ValidationIssue("error", "exp 必须为数值", source, record_id, "exp"))
 
     return issues
 
@@ -456,10 +509,17 @@ def validate_event_outcome_record(
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
         "guaranteed", "random_pools", "effects",
+        # 等级/经验联动（Phase 4）
+        "exp", "min_level",
     }
     for key in record:
         if key not in known_keys:
             issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    if "min_level" in record and (not isinstance(record["min_level"], int) or record["min_level"] < 0):
+        issues.append(ValidationIssue("error", "min_level 必须为非负整数", source, record_id, "min_level"))
+    if "exp" in record and not _is_number_like(record["exp"]):
+        issues.append(ValidationIssue("error", "exp 必须为数值", source, record_id, "exp"))
 
     return issues
 
@@ -540,12 +600,145 @@ def validate_attr_record(
     if order is not None and not isinstance(order, int):
         issues.append(ValidationIssue("warn", "order 建议为整数", source, record_id, "order"))
 
+    # level_table 校验（每属性经验/等级表，可选）
+    level_table = record.get("level_table")
+    if level_table is not None:
+        if not isinstance(level_table, list):
+            issues.append(ValidationIssue("error", "level_table 必须是列表", source, record_id, "level_table"))
+        else:
+            for i, lt in enumerate(level_table):
+                if not isinstance(lt, dict):
+                    issues.append(ValidationIssue("error", f"level_table[{i}] 必须是字典", source, record_id, f"level_table[{i}]"))
+                    continue
+                if not isinstance(lt.get("level"), int):
+                    issues.append(ValidationIssue("error", f"level_table[{i}].level 必须是整数", source, record_id, f"level_table[{i}].level"))
+                if not _is_number_like(lt.get("exp_required")):
+                    issues.append(ValidationIssue("error", f"level_table[{i}].exp_required 必须为数值", source, record_id, f"level_table[{i}].exp_required"))
+                pb = lt.get("permanent_bonus")
+                if pb is not None and not isinstance(pb, dict):
+                    issues.append(ValidationIssue("error", f"level_table[{i}].permanent_bonus 必须是字典", source, record_id, f"level_table[{i}].permanent_bonus"))
+
+    # char_level_bonuses 校验（全局等级驱动的属性加成，可选）
+    char_level_bonuses = record.get("char_level_bonuses")
+    if char_level_bonuses is not None:
+        if not isinstance(char_level_bonuses, list):
+            issues.append(ValidationIssue("error", "char_level_bonuses 必须是列表", source, record_id, "char_level_bonuses"))
+        else:
+            for i, bonus in enumerate(char_level_bonuses):
+                if not isinstance(bonus, dict):
+                    issues.append(ValidationIssue("error", f"char_level_bonuses[{i}] 必须是字典", source, record_id, f"char_level_bonuses[{i}]"))
+                    continue
+                b_type = str(bonus.get("type") or "").strip()
+                if b_type not in ("at_level", "per_levels"):
+                    issues.append(ValidationIssue("error", f"char_level_bonuses[{i}].type 必须为 'at_level' 或 'per_levels'", source, record_id, f"char_level_bonuses[{i}].type"))
+                if b_type == "at_level":
+                    if not isinstance(bonus.get("level"), int):
+                        issues.append(ValidationIssue("error", f"char_level_bonuses[{i}].level 必须是正整数", source, record_id, f"char_level_bonuses[{i}].level"))
+                elif b_type == "per_levels":
+                    if not isinstance(bonus.get("every"), int) or int(bonus.get("every", 0)) <= 0:
+                        issues.append(ValidationIssue("error", f"char_level_bonuses[{i}].every 必须是正整数", source, record_id, f"char_level_bonuses[{i}].every"))
+                    offset = bonus.get("min_level_offset")
+                    if offset is not None and not isinstance(offset, int):
+                        issues.append(ValidationIssue("warn", f"char_level_bonuses[{i}].min_level_offset 建议为整数", source, record_id, f"char_level_bonuses[{i}].min_level_offset"))
+                b_bonus = bonus.get("bonus")
+                if b_bonus is not None and not isinstance(b_bonus, dict):
+                    issues.append(ValidationIssue("error", f"char_level_bonuses[{i}].bonus 必须是字典", source, record_id, f"char_level_bonuses[{i}].bonus"))
+
     known_keys = {
         "id", "name", "i18n_key", "color", "initial", "order",
         "desc", "description", "desc_i18n_key", "description_i18n_key",
+        "level_table", "char_level_bonuses",
     }
     for key in record:
         if key not in known_keys:
             issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
 
     return issues
+
+
+def validate_level_config(
+    data: dict[str, Any],
+    source: str = "level_setting.json",
+) -> list[ValidationIssue]:
+    """校验全局等级配置文件（module/life/level/level_setting.json）。"""
+    issues: list[ValidationIssue] = []
+    record_id = "level_config"
+
+    init_exp = data.get("initial_exp_required")
+    if not _is_number_like(init_exp) or float(init_exp) <= 0:
+        issues.append(ValidationIssue("error", "initial_exp_required 必须为正数", source, record_id, "initial_exp_required"))
+
+    passive_exp = data.get("passive_exp_per_tick")
+    if passive_exp is not None:
+        if not _is_number_like(passive_exp) or float(passive_exp) < 0:
+            issues.append(ValidationIssue("error", "passive_exp_per_tick 必须为非负数", source, record_id, "passive_exp_per_tick"))
+
+    growth_ranges = data.get("growth_ranges")
+    if growth_ranges is None or not isinstance(growth_ranges, list) or len(growth_ranges) == 0:
+        issues.append(ValidationIssue("error", "growth_ranges 必须是非空列表", source, record_id, "growth_ranges"))
+        return issues
+
+    max_to_level = 0
+    current_exp = float(init_exp) if _is_number_like(init_exp) else 100.0
+    for i, rng in enumerate(growth_ranges):
+        if not isinstance(rng, dict):
+            issues.append(ValidationIssue("error", f"growth_ranges[{i}] 必须是字典", source, record_id, f"growth_ranges[{i}]"))
+            continue
+        fl = rng.get("from_level")
+        tl = rng.get("to_level")
+        eg = rng.get("exp_growth")
+        if not isinstance(fl, int) or fl < 1:
+            issues.append(ValidationIssue("error", f"growth_ranges[{i}].from_level 必须是 ≥1 的整数", source, record_id, f"growth_ranges[{i}].from_level"))
+        if not isinstance(tl, int) or (isinstance(fl, int) and tl < fl):
+            issues.append(ValidationIssue("error", f"growth_ranges[{i}].to_level 必须是 ≥from_level 的整数", source, record_id, f"growth_ranges[{i}].to_level"))
+        if not _is_number_like(eg):
+            issues.append(ValidationIssue("error", f"growth_ranges[{i}].exp_growth 必须为数值", source, record_id, f"growth_ranges[{i}].exp_growth"))
+            continue
+        # 验证该区间内任意等级的升级经验不会 ≤ 0
+        if isinstance(fl, int) and isinstance(tl, int):
+            check_exp = current_exp
+            for level in range(fl, tl + 1):
+                if level > fl:
+                    check_exp += float(eg)
+                if check_exp <= 0:
+                    issues.append(ValidationIssue("warn", f"growth_ranges[{i}] 中第 {level} 级升级所需经验 ≤0，请检查 exp_growth", source, record_id, f"growth_ranges[{i}]"))
+                    break
+            current_exp = check_exp + float(eg)
+            max_to_level = tl
+
+    known_keys = {"initial_exp_required", "passive_exp_per_tick", "growth_ranges"}
+    for key in data:
+        if key not in known_keys:
+            issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    return issues
+
+
+def validate_tag_record(
+    record: dict[str, Any],
+    source: str,
+) -> list[ValidationIssue]:
+    """校验标签定义记录（module/life/tags/ 目录）。"""
+    issues: list[ValidationIssue] = []
+    record_id = str(record.get("id") or "<unknown>")
+
+    if "id" not in record or not str(record.get("id", "")).strip():
+        issues.append(ValidationIssue("error", "tag 缺少 id", source, record_id, "id"))
+    if "buff_id" not in record or not str(record.get("buff_id", "")).strip():
+        issues.append(ValidationIssue("warn", "tag 缺少 buff_id", source, record_id, "buff_id"))
+
+    global_event = record.get("global_event")
+    if global_event is not None and not isinstance(global_event, bool):
+        issues.append(ValidationIssue("error", "global_event 必须是布尔值", source, record_id, "global_event"))
+
+    known_keys = {
+        "id", "buff_id", "name", "i18n_key", "color",
+        "use_restricted_i18n_key", "fire_restricted_i18n_key",
+        "global_event",
+    }
+    for key in record:
+        if key not in known_keys:
+            issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    return issues
+

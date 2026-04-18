@@ -284,6 +284,13 @@ class LifeInventoryTab(QFrame):
         title = QLabel(f"{item.get('name', item.get('id', 'unknown'))}  x{int(item.get('count', 0))}")
         title.setStyleSheet("font-weight: 700; color: #f3f3f3; background: transparent; border: none;")
         title_row.addWidget(title)
+        if item.get("unique", False):
+            unique_badge = QLabel(tr("life.inventory.unique_badge"))
+            unique_badge.setStyleSheet(
+                "background: #c8a02066; color: #ffffff; border: 1px solid #c8a020aa; "
+                "border-radius: 3px; padding: 0px 4px; font-size: 9px; font-weight: 600;"
+            )
+            title_row.addWidget(unique_badge)
         for tag_id in item.get("tags", []):
             tag_info = self._tag_display_map.get(tag_id)
             if tag_info:
@@ -302,6 +309,12 @@ class LifeInventoryTab(QFrame):
             details.append(f"ID: {item.get('id', '')}")
         if not bool(item.get("usable", True)):
             details.append(tr("life.inventory.not_usable"))
+
+        # 被动属性加成预览
+        passive_bonus: dict = item.get("passive_attr_bonus") or {}
+        if passive_bonus:
+            bonus_parts = [f"{k} {v:+g}" for k, v in sorted(passive_bonus.items())]
+            details.append(tr("life.inventory.passive_bonus") + " " + "  ".join(bonus_parts))
 
         cooldown_remaining = float(item.get("cooldown_remaining", 0))
         on_cooldown = bool(item.get("on_cooldown", False)) or cooldown_remaining > 0
@@ -329,7 +342,9 @@ class LifeInventoryTab(QFrame):
 
         can_use = bool(item.get("can_use", True))
         block_reason = str(item.get("block_reason", ""))
-        is_restricted = not can_use and block_reason in ("dead", "tag_restricted")
+        is_restricted = not can_use and (
+            block_reason == "dead" or block_reason.startswith("tag_restricted:")
+        )
 
         if on_cooldown:
             use_btn = QPushButton(tr("life.inventory.use_cooldown_btn"))
@@ -453,9 +468,10 @@ class LifeInventoryTab(QFrame):
                     self._feedback_callback(tr("life.inventory.use_on_cooldown", seconds=secs), "warning")
                 elif reason == "dead":
                     self._feedback_callback(tr("life.inventory.use_dead"), "warning")
-                elif reason == "tag_restricted":
-                    self._feedback_callback(tr("life.inventory.use_tag_restricted"), "warning")
+                elif reason == "level_too_low":
+                    self._feedback_callback(tr("life.item.fail.level_too_low"), "warning")
                 else:
+                    # 含 tag_restricted:{tag_id}，get_item_fail_message 内部回查标签注册表
                     custom_msg = None
                     if self._get_item_fail_message is not None:
                         custom_msg = self._get_item_fail_message(item_id, reason)

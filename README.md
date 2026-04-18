@@ -41,15 +41,15 @@
 - [x] buff支持变更属性
 - [x] 重构属性UI
 - [x] 支持使用json注册属性值
-- [ ] 休眠模式（挂后台或太久没移动鼠标影响tick速率）
-- [ ] 物品唯一持有属性
-- [ ] 持有的物品支持永久变更属性值
+- [x] 休眠模式（挂后台或太久没移动鼠标影响tick速率）
+- [x] 物品唯一持有属性
+- [x] 持有的物品支持永久变更属性值
 - [x] 养成系统搜索功能
 - [x] 事件触发被属性值影响
-- [ ] 等级系统玩法(扩展养成玩法)
+- [x] 等级系统玩法(扩展养成玩法)
 - [x] 死亡逻辑
 - [ ] 玩法闭环
-- [ ] 存档系统（导出、导入功能，存档栏）
+- [x] 存档系统（导出、导入功能，存档栏）
 - [x] 模组覆盖注册逻辑
 - [ ] 模组管理器: 调整模组注册顺序
 - [ ] 补全动作（疲惫，休息，死亡）
@@ -60,6 +60,7 @@
 - [x] 模组支持注册i18key
 - [x] 模组覆盖i18汉化
 - [x] log系统优化（将某些日志归类为debug，且在开发者模式中支持调整log等级）
+- [ ] 日志记录补全
 
 ### 资源
 
@@ -115,19 +116,28 @@ logo.png
 ##### 桌宠动画及脚本
 - 设计：LyceenAiro
 - 代码：LyceenAiro + Copilot
-##### 设置
+- 测试：LyceenAiro
+##### 设置及其扩展
 - 设计：LyceenAiro + Copilot
 - 代码：Copilot 
+- 测试：LyceenAiro
 ##### i18
 - 设计：LyceenAiro + Copilot
 - 代码：Copilot
 - 重构：Copilot
+- 测试：LyceenAiro
 ##### 资源选择器
 - 设计：Copilot
 - 代码：Copilot 
+- 测试：LyceenAiro
 ##### 资源编码器
 - 设计：LyceenAiro + Copilot
 - 代码：Copilot
+- 测试：LyceenAiro
+##### life模块
+- 设计：LyceenAiro
+- 代码：LyceenAiro + Copilot
+- 测试：LyceenAiro
 
 #### 美术资源(拒绝生成式AI创建美术资源)
 - 动画资源支持：犬牙冢

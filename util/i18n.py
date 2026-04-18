@@ -42,6 +42,25 @@ def get_extra_lang_dirs() -> List[Path]:
     return list(_extra_lang_dirs)
 
 
+def attach_mod_lang_dirs_early(mod_root: str | Path = "mod") -> int:
+    """Scan mod directories and attach their lang/ subdirectories early.
+
+    Call this before any UI module imports so that class-level
+    ``tab_name = tr(...)`` attributes pick up mod translations.
+    Returns the number of lang dirs attached.
+    """
+    root = Path(mod_root)
+    if not root.exists():
+        return 0
+    count = 0
+    for mod_dir in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if mod_dir.is_dir():
+            lang_dir = mod_dir / "lang"
+            if lang_dir.exists() and attach_lang_dir(lang_dir):
+                count += 1
+    return count
+
+
 def _load_locale_bundle(locale: str) -> Dict[str, str]:
     normalized = str(locale or "").strip().lower() or FALLBACK_LOCALE
     if normalized in _cache:
