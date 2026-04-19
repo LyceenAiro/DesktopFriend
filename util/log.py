@@ -1,4 +1,5 @@
 import json
+import traceback
 from datetime import datetime
 from os import listdir, makedirs, path, replace
 
@@ -78,6 +79,9 @@ class init_log:
 
         self.set_level(data.get("log_level", "INFO"))
         self.set_max_file_size_mb(data.get("log_max_file_size_mb", 32))
+        self.DEBUG(
+            f"日志配置已加载: level={self.level_name} max_file_size_mb={int(self.max_file_size / 1024 / 1024)}"
+        )
 
     def pack_log(self):
         if not path.exists(self.log_file):
@@ -133,6 +137,21 @@ class init_log:
 
     def ERROR(self, string):
         self._log("ERROR", str(string))
+
+    def EXCEPTION(self, string, exc: Exception | BaseException | None = None):
+        message = str(string)
+        if exc is not None:
+            message = f"{message}: {exc}"
+        self._log("ERROR", message)
+        if exc is not None and getattr(exc, "__traceback__", None) is not None:
+            formatted = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        else:
+            formatted = traceback.format_exc()
+        formatted = formatted.strip()
+        if not formatted or formatted == "NoneType: None":
+            return
+        for line in formatted.splitlines():
+            self._log("ERROR", line)
 
     def WRITE(self, string, type="None"):
         if string == "" or string.startswith("&"):

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "dying",
+    "name": "濒死",
+    "name_i18n_key": "life.buff.dying.name",
+    "desc": "生命体征微弱，仅能进行急救相关的操作。",
+    "desc_i18n_key": "life.buff.dying.desc",
+    "restrict_item_tags": ["first_aid"],
+    "restrict_trigger_tags": ["first_aid"]
+  }
+]

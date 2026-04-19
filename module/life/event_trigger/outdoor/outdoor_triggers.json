@@ -1,0 +1,65 @@
+[
+  {
+    "id": "wild_explore",
+    "name": "野外探险",
+    "name_i18n_key": "life.trigger.wild_explore.name",
+    "desc": "在周边区域进行短时探索。",
+    "desc_i18n_key": "life.trigger.wild_explore.desc",
+    "exp": 1,
+    "duration_s": 10,
+    "costs": {
+      "energy": 100,
+      "psc": 50
+    },
+    "tags": ["explore"],
+    "mutex_by_tag": true,
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": [
+      {
+        "entries": [
+          {"type": "outcome", "id": "wild_find_water", "chance": 25, "attr_bonus": {"str": 1}},
+          {"type": "outcome", "id": "wild_find_food", "chance": 25, "attr_bonus": {"str": 1}},
+          {"type": "outcome", "id": "wild_find_medicine", "chance": 25, "attr_bonus": {"str": 1}},
+          {"type": "outcome", "id": "wild_find_temple_pass", "chance": 1, "attr_bonus": {"str": 0.5}}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "temple_explore",
+    "name": "神殿探险",
+    "name_i18n_key": "life.trigger.temple_explore.name",
+    "desc": "持证明进入神殿深处进行探索。",
+    "desc_i18n_key": "life.trigger.temple_explore.desc",
+    "exp": 15,
+    "duration_s": 30,
+    "cooldown_s": 600,
+    "requires_item": "temple_pass",
+    "costs": {
+      "energy": 250,
+      "psc": 200
+    },
+    "tags": ["explore"],
+    "mutex_by_tag": true,
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": [
+      {
+        "entries": [
+          {"type": "outcome", "id": "temple_find_gem", "chance": 2, "attr_bonus": {"str": 1}},
+          {"type": "outcome", "id": "temple_find_salt_crystal", "chance": 10},
+            {"type": "outcome", "id": "temple_fountain", "chance": 10},
+            {"type": "outcome", "id": "temple_trap", "chance": 2},
+          {"type": "outcome", "id": "temple_germ", "chance": 2, "attr_bonus": {"vit": -0.1}}
+        ]
+      }
+    ]
+  }
+]

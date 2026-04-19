@@ -324,6 +324,7 @@ class LifeWindow(QDialog):
         items = self.life.get_inventory_snapshot()
         effects = list(profile.active_effects)
         triggers = self.life.get_event_triggers_snapshot()
+        recent_event_logs = self.life.get_recent_event_logs()
         tag_display_map = self.life.get_tag_display_map()
 
         states_tab = self.tab_widgets.get(LifeStatesTab.tab_name)
@@ -345,9 +346,23 @@ class LifeWindow(QDialog):
         current_item_sig = tuple((i["id"], i["count"], i.get("on_cooldown", False)) for i in items)
         current_effect_sig = tuple(e.effect_id for e in effects)
         current_trigger_sig = tuple((t["id"], t.get("on_cooldown"), t.get("can_fire"), t.get("executing")) for t in triggers)
+        current_event_log_sig = tuple(
+            (
+                int(r.get("seq", 0)) if isinstance(r.get("seq"), int) else 0,
+                str(r.get("type", "")),
+                str(r.get("source", "")),
+                str(r.get("trigger_id", "")),
+                str(r.get("trigger_name", "")),
+                str((r.get("entry") or {}).get("type", "")) if isinstance(r.get("entry"), dict) else "",
+                str((r.get("entry") or {}).get("id", "")) if isinstance(r.get("entry"), dict) else "",
+            )
+            for r in recent_event_logs
+            if isinstance(r, dict)
+        )
         inv_changed = current_item_sig != getattr(self, "_last_item_sig", None)
         eff_changed = current_effect_sig != getattr(self, "_last_effect_sig", None)
         trg_changed = current_trigger_sig != getattr(self, "_last_trigger_sig", None)
+        event_log_changed = current_event_log_sig != getattr(self, "_last_event_log_sig", None)
 
         if inventory_tab is not None:
             if inv_changed or self.active_tab != LifeInventoryTab.tab_name:
@@ -360,9 +375,10 @@ class LifeWindow(QDialog):
                 self._last_effect_sig = current_effect_sig
 
         if events_tab is not None:
-            if completed_triggers or trg_changed or self.active_tab != LifeEventsTab.tab_name:
-                events_tab.update_data(triggers, self.developer_mode, tag_display_map)
+            if completed_triggers or trg_changed or event_log_changed or self.active_tab != LifeEventsTab.tab_name:
+                events_tab.update_data(triggers, self.developer_mode, tag_display_map, recent_event_logs)
                 self._last_trigger_sig = current_trigger_sig
+                self._last_event_log_sig = current_event_log_sig
 
         # 任意标签页都提示“执行完成”
         if completed_triggers:

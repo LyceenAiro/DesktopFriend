@@ -1,0 +1,48 @@
+[
+  {
+    "id": "hp",
+    "name": "HP",
+    "i18n_key": "life.state.hp",
+    "default": 1000,
+    "min": 0,
+    "max": 1000,
+    "order": 10,
+    "effects": [
+      { "min": 0, "max": 100, "buff_id": "dying" }
+    ]
+  },
+  {
+    "id": "happy",
+    "name": "HAPPY",
+    "i18n_key": "life.state.happy",
+    "default": 1000,
+    "min": 0,
+    "max": 1000,
+    "order": 20,
+    "effects": [
+      {
+        "min": 0,
+        "max": 200,
+        "buff_id": "depressed"
+      }
+    ]
+  },
+  {
+    "id": "psc",
+    "name": "PSC",
+    "i18n_key": "life.state.psc",
+    "default": 1000,
+    "min": 0,
+    "max": 1000,
+    "order": 30
+  },
+  {
+    "id": "energy",
+    "name": "ENERGY",
+    "i18n_key": "life.state.energy",
+    "default": 1000,
+    "min": 0,
+    "max": 1000,
+    "order": 40
+  }
+]

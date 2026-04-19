@@ -1,0 +1,9 @@
+{
+  "classes": ["status"],
+  "class_definitions": {
+    "status": {
+      "name": "状态",
+      "name_i18n_key": "life.buff_class.status"
+    }
+  }
+}

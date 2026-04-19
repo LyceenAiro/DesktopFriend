@@ -1,0 +1,9 @@
+{
+  "classes": ["nutrition"],
+  "class_definitions": {
+    "nutrition": {
+      "name": "营养",
+      "name_i18n_key": "life.buff_class.nutrition"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "classes": ["daily"],
+  "class_definitions": {
+    "daily": {
+      "name": "日常",
+      "name_i18n_key": "life.trigger_class.daily"
+    }
+  }
+}

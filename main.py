@@ -16,10 +16,8 @@ def exception_hook(exc_type, exc_value, exc_traceback):
         # 忽略键盘中断
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
-    # 记录错误日志
-    _log.ERROR(f"未处理的异常: {exc_type.__name__}: {exc_value}")
-    import traceback
-    _log.ERROR("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+    exc_value.__traceback__ = exc_traceback
+    _log.EXCEPTION(f"未处理的异常: {exc_type.__name__}", exc_value)
     # 显示错误对话框
     app = QApplication.instance()
     error_dialog = ErrorDialog(exc_type, exc_value, exc_traceback, parent=None)
@@ -32,6 +30,7 @@ def exception_hook(exc_type, exc_value, exc_traceback):
 if __name__ == "__main__":
     # 设置全局异常处理
     sys.excepthook = exception_hook
+    _log.INFO(f"[App]程序启动 argv={sys.argv}")
 
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -103,13 +102,23 @@ if __name__ == "__main__":
     afk_ms = int(debug_cfg.get("life_afk_tick_interval_ms", 5000))
     afk_timeout_s = int(debug_cfg.get("life_afk_timeout_s", 3600))
     configure_tick_intervals(normal_ms, afk_ms)
+    _log.INFO(
+        f"[App]运行配置 tick={normal_ms}ms afk_tick={afk_ms}ms afk_timeout={afk_timeout_s}s pack={selected_pack}"
+    )
 
+    _log.INFO("[App]开始注册事件与菜单")
     registerInit()
+    _log.INFO("[App]开始启动养成循环")
     start_life_loop(app, interval_ms=normal_ms)
+    _log.INFO("[App]开始加载 life mods")
     load_mods()
 
     from util.idle_monitor import IdleMonitor
     IdleMonitor.start(app, afk_timeout_s=afk_timeout_s)
+    _log.INFO("[App]空闲监控已启动")
 
     QTimer.singleShot(0, lambda: ShowApp(PetWindow))
-    sys.exit(app.exec())
+    _log.INFO("[App]已安排显示主窗口，进入事件循环")
+    exit_code = app.exec()
+    _log.INFO(f"[App]程序退出 code={exit_code}")
+    sys.exit(exit_code)

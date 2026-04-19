@@ -1,0 +1,9 @@
+{
+  "classes": ["consumable"],
+  "class_definitions": {
+    "consumable": {
+      "name": "消耗品",
+      "name_i18n_key": "life.item_class.consumable"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
@@ -23,6 +24,7 @@ _OTHER_CLASS_ID = "__other__"
 
 class LifeEventsTab(QFrame):
     tab_name = tr("life.tabs.events")
+    _MAX_GROUPED_RESULT_ROWS = 10
     _CONTROL_HEIGHT = 28
     _SEARCH_STYLE = (
         "QLineEdit { background: #1f1f1f; color: #f0f0f0; border: 1px solid #3a3a3a; "
@@ -66,7 +68,9 @@ class LifeEventsTab(QFrame):
         self._refresh_callback = refresh_callback
         self._get_trigger_fail_message = get_trigger_fail_message
         self._rows: list[QFrame] = []
-        self._result_rows: list[QFrame] = []
+        self._trigger_result_rows: list[QFrame] = []
+        self._passive_result_rows: list[QFrame] = []
+        self._event_logs: list[dict[str, Any]] = []
         self._active_class: str | None = None  # None = 全部
         self._search_text: str = ""
         self._triggerable_only: bool = False
@@ -113,27 +117,51 @@ class LifeEventsTab(QFrame):
 
         layout.addWidget(trigger_card)
 
-        # 最近事件结果卡片
-        result_card = create_section_card(tr("life.events.result.title"), tr("life.events.result.desc"))
-        result_card_layout = result_card.layout()
+        # 普通事件结果卡片
+        trigger_result_card = create_section_card(
+            tr("life.events.result.trigger.title"),
+            tr("life.events.result.trigger.desc"),
+        )
+        trigger_result_card_layout = trigger_result_card.layout()
 
-        self.result_container = QFrame()
-        self.result_layout = QVBoxLayout(self.result_container)
-        self.result_layout.setContentsMargins(0, 0, 0, 0)
-        self.result_layout.setSpacing(6)
-        result_card_layout.addWidget(self.result_container)
+        self.trigger_result_container = QFrame()
+        self.trigger_result_layout = QVBoxLayout(self.trigger_result_container)
+        self.trigger_result_layout.setContentsMargins(0, 0, 0, 0)
+        self.trigger_result_layout.setSpacing(6)
+        trigger_result_card_layout.addWidget(self.trigger_result_container)
+        layout.addWidget(trigger_result_card)
 
-        layout.addWidget(result_card)
+        # 随机事件结果卡片
+        passive_result_card = create_section_card(
+            tr("life.events.result.passive.title"),
+            tr("life.events.result.passive.desc"),
+        )
+        passive_result_card_layout = passive_result_card.layout()
+
+        self.passive_result_container = QFrame()
+        self.passive_result_layout = QVBoxLayout(self.passive_result_container)
+        self.passive_result_layout.setContentsMargins(0, 0, 0, 0)
+        self.passive_result_layout.setSpacing(6)
+        passive_result_card_layout.addWidget(self.passive_result_container)
+        layout.addWidget(passive_result_card)
         layout.addStretch()
 
-        self._last_result: dict[str, Any] | None = None
+        self._render_event_logs()
 
-    def update_data(self, triggers: list[dict[str, Any]], developer_mode: bool = False, tag_display_map: dict | None = None) -> None:
+    def update_data(
+        self,
+        triggers: list[dict[str, Any]],
+        developer_mode: bool = False,
+        tag_display_map: dict | None = None,
+        recent_event_logs: list[dict[str, Any]] | None = None,
+    ) -> None:
         self._triggers = list(triggers)
         self._developer_mode = bool(developer_mode)
         self._tag_display_map = tag_display_map or {}
+        self._event_logs = list(recent_event_logs or [])
         self._rebuild_sub_tabs()
         self._rebuild_trigger_rows()
+        self._render_event_logs()
 
     # ── 子标签 ──────────────────────────────────────────
 
@@ -356,13 +384,7 @@ class LifeEventsTab(QFrame):
         )
         can_fire = bool(trigger.get("can_fire", True))
         block_reason = str(trigger.get("block_reason", ""))
-        item_blocked = not can_fire and (
-            block_reason.startswith("missing_item:") or block_reason.startswith("has_item:")
-        )
-        tag_or_dead_blocked = not can_fire and (
-            block_reason == "dead" or block_reason.startswith("tag_restricted:")
-            or block_reason == "level_too_low"
-        )
+        blocked = (not can_fire) and (not executing) and (not on_cooldown)
         if executing:
             fire_btn = QPushButton(tr("life.events.fire_executing_btn"))
             fire_btn.setFixedWidth(72)
@@ -373,7 +395,7 @@ class LifeEventsTab(QFrame):
             fire_btn.setFixedWidth(72)
             fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
             fire_btn.setStyleSheet(busy_style)
-        elif item_blocked or tag_or_dead_blocked:
+        elif blocked:
             fire_btn = QPushButton(tr("life.events.fire_blocked_btn"))
             fire_btn.setFixedWidth(72)
             fire_btn.setFixedHeight(self._CONTROL_HEIGHT)
@@ -436,6 +458,10 @@ class LifeEventsTab(QFrame):
                 item_id = reason[9:]
                 item_name = self._get_item_display_name(item_id)
                 self._feedback_callback(tr("life.events.fire_has_item", item=item_name), "warning")
+            elif reason.startswith("insufficient_state:"):
+                state_key = reason[len("insufficient_state:"):].strip()
+                state_name = tr(f"life.state.{state_key}", default=state_key or "state")
+                self._feedback_callback(tr("life.events.fire_insufficient_state", state=state_name), "warning")
             else:
                 self._feedback_callback(tr("life.events.fire_failed"), "error")
             return
@@ -445,72 +471,149 @@ class LifeEventsTab(QFrame):
             self._feedback_callback(tr("life.events.fire_failed"), "error")
             return
 
-        self._last_result = result
         if result.get("pending"):
-            self._show_result_log(result)
             self._feedback_callback(
                 tr("life.events.fire_started").replace("{name}", result.get("trigger_name", trigger_id)),
                 "info",
             )
         else:
-            self._show_result_log(result)
             self._feedback_callback(
                 tr("life.events.fire_success").replace("{name}", result.get("trigger_name", trigger_id)),
                 "info",
             )
         self._refresh_callback()
 
-    def _show_result_log(self, result: dict[str, Any]) -> None:
-        for row in self._result_rows:
-            self.result_layout.removeWidget(row)
+    def _render_event_logs(self) -> None:
+        self._clear_result_rows(self.trigger_result_layout, self._trigger_result_rows)
+        self._clear_result_rows(self.passive_result_layout, self._passive_result_rows)
+
+        trigger_logs = [r for r in self._event_logs if str(r.get("source") or "") == "trigger"]
+        passive_logs = [r for r in self._event_logs if str(r.get("source") or "") == "passive"]
+
+        self._render_grouped_logs(self.trigger_result_layout, self._trigger_result_rows, trigger_logs, source="trigger")
+        self._render_grouped_logs(self.passive_result_layout, self._passive_result_rows, passive_logs, source="passive")
+
+    def _clear_result_rows(self, target_layout: QVBoxLayout, rows: list[QFrame]) -> None:
+        for row in rows:
+            target_layout.removeWidget(row)
             row.deleteLater()
-        self._result_rows.clear()
+        rows.clear()
 
-        if result.get("pending"):
-            label = QLabel(tr("life.events.result.pending").replace("{name}", result.get("trigger_name", "")))
-            label.setObjectName("helperText")
-            label.setStyleSheet("color: #e0c060; background: transparent; border: none;")
-            row = self._wrap_row(label)
-            self.result_layout.addWidget(row)
-            self._result_rows.append(row)
-            return
+    def _render_grouped_logs(
+        self,
+        target_layout: QVBoxLayout,
+        row_store: list[QFrame],
+        logs: list[dict[str, Any]],
+        source: str,
+    ) -> None:
+        # 仅合并“相邻且同键”的记录，避免同类但不相邻的结果跨段合并。
+        grouped_runs: list[dict[str, Any]] = []
+        for log_row in reversed(logs):
+            key = self._build_event_log_group_key(log_row)
+            if grouped_runs and str(grouped_runs[-1].get("key", "")) == key:
+                grouped_runs[-1]["count"] = int(grouped_runs[-1].get("count", 1)) + 1
+            else:
+                grouped_runs.append({"key": key, "row": log_row, "count": 1})
 
-        results = result.get("results", [])
-        if not results:
+        if not grouped_runs:
             label = QLabel(tr("life.events.result.nothing"))
             label.setObjectName("helperText")
             row = self._wrap_row(label)
-            self.result_layout.addWidget(row)
-            self._result_rows.append(row)
+            target_layout.addWidget(row)
+            row_store.append(row)
             return
 
-        # 显示触发器名称为标题
-        header = QLabel(f"▶ {result.get('trigger_name', '')}")
-        header.setStyleSheet("font-weight: 700; color: #e0c060; background: transparent; border: none;")
-        header_row = self._wrap_row(header)
-        self.result_layout.addWidget(header_row)
-        self._result_rows.append(header_row)
+        for payload in grouped_runs[: self._MAX_GROUPED_RESULT_ROWS]:
+            repeat_count = int(payload["count"])
+            text = self._format_event_log_text(payload["row"])
+            entry_row = self._build_result_row(text, repeat_count, source=source)
+            target_layout.addWidget(entry_row)
+            row_store.append(entry_row)
 
-        for entry in results:
-            entry_type = entry.get("type", "")
-            if entry_type == "outcome":
-                text = f"🎲 {entry.get('name', entry.get('id', ''))}"
-                desc = entry.get("desc", "")
-                if desc:
-                    text += f" — {desc}"
-            elif entry_type == "item":
-                text = f"📦 {tr('life.events.result.got_item')}: {entry.get('id', '')} x{entry.get('count', 1)}"
-            elif entry_type == "buff":
-                text = f"✨ {tr('life.events.result.got_buff')}: {entry.get('id', '')}"
-            else:
-                text = str(entry)
+    def _build_event_log_group_key(self, log_row: dict[str, Any]) -> str:
+        log_type = str(log_row.get("type") or "")
+        if log_type in {"pending", "completed"}:
+            return f"{log_type}:{str(log_row.get('trigger_id') or '')}"
+        entry = log_row.get("entry")
+        if not isinstance(entry, dict):
+            return f"unknown:{log_type}:{str(log_row)}"
+        entry_type = str(entry.get("type") or "")
+        entry_id = str(entry.get("id") or "")
+        entry_count = int(entry.get("count", 1)) if str(entry.get("count", "")).strip() else 1
+        return f"result:{entry_type}:{entry_id}:{entry_count}"
 
-            label = QLabel(text)
-            label.setWordWrap(True)
-            label.setStyleSheet("color: #d0d0d0; background: transparent; border: none;")
-            entry_row = self._wrap_row(label)
-            self.result_layout.addWidget(entry_row)
-            self._result_rows.append(entry_row)
+    def _build_result_row(self, text: str, repeat_count: int, source: str) -> QFrame:
+        row = QFrame()
+        row.setObjectName("lifeEventRow")
+        row.setStyleSheet("QFrame#lifeEventRow { background: #1f1f1f; border: 1px solid #3a3a3a; border-radius: 8px; }")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        row_layout.setSpacing(8)
+
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet("color: #d0d0d0; background: transparent; border: none;")
+        row_layout.addWidget(label, 1)
+
+        if repeat_count > 1:
+            badge = QLabel(f"x{repeat_count}")
+            badge_style = self._badge_style_for_source(source)
+            badge.setStyleSheet(
+                f"background: {badge_style['bg']}; color: #ffffff; border: 1px solid {badge_style['border']}; "
+                "border-radius: 10px; padding: 1px 8px; font-weight: 700;"
+            )
+            badge.setAlignment(Qt.AlignCenter)
+            row_layout.addWidget(badge, 0, Qt.AlignTop)
+
+        return row
+
+    def _badge_style_for_source(self, source: str) -> dict[str, str]:
+        src = str(source or "").strip().lower()
+        if src == "passive":
+            return {"bg": "#1f6a6a", "border": "#4fa0a0"}
+        return {"bg": "#2e5f9f", "border": "#5f8fc8"}
+
+    def _format_event_log_text(self, log_row: dict[str, Any]) -> str:
+        log_type = str(log_row.get("type") or "")
+        trigger_name = str(log_row.get("trigger_name") or log_row.get("trigger_id") or "")
+        ts_text = self._format_event_log_timestamp(log_row)
+
+        if log_type == "pending":
+            return f"[{ts_text}] {tr('life.events.result.pending').replace('{name}', trigger_name)}"
+        if log_type == "completed":
+            return f"[{ts_text}] {tr('life.events.completed', name=trigger_name)}"
+        entry = log_row.get("entry")
+        if not isinstance(entry, dict):
+            return f"[{ts_text}] {str(log_row)}"
+        entry_type = str(entry.get("type") or "")
+        if entry_type == "outcome":
+            text = f"🎲 {entry.get('name', entry.get('id', ''))}"
+            desc = str(entry.get("desc") or "").strip()
+            if desc:
+                text += f" — {desc}"
+            return f"[{ts_text}] {text}"
+        if entry_type == "item":
+            item_id = str(entry.get("id") or "")
+            item_name = str(entry.get("name") or "").strip()
+            if not item_name and item_id:
+                item_name = self._get_item_display_name(item_id)
+            display_name = item_name or item_id
+            return f"[{ts_text}] 📦 {tr('life.events.result.got_item')}: {display_name} x{entry.get('count', 1)}"
+        if entry_type == "buff":
+            buff_name = str(entry.get("name") or entry.get("id") or "")
+            return f"[{ts_text}] ✨ {tr('life.events.result.got_buff')}: {buff_name}"
+        if entry_type == "none":
+            return f"[{ts_text}] {tr('life.events.result.nothing')}"
+        return f"[{ts_text}] {str(entry)}"
+
+    def _format_event_log_timestamp(self, log_row: dict[str, Any]) -> str:
+        try:
+            ts = float(log_row.get("ts", 0.0))
+        except Exception:
+            ts = 0.0
+        if ts <= 0.0:
+            return "--:--:--"
+        return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
 
     def _show_trigger_info(self, trigger_id: str) -> None:
         detail = self._get_trigger_detail(trigger_id)

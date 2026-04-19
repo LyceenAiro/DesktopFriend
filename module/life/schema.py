@@ -251,7 +251,20 @@ def validate_item_record(
             "min_level",
             "permanent_attr_delta",
             "attr_exp",
+            "clear_buffs",
         }:
+            continue
+
+        if key == "clear_buffs":
+            if isinstance(value, str):
+                if not value.strip():
+                    issues.append(ValidationIssue("error", "clear_buffs 不能为空字符串", source, record_id, key))
+                continue
+            if isinstance(value, list):
+                if not all(isinstance(v, str) and v.strip() for v in value):
+                    issues.append(ValidationIssue("error", "clear_buffs 列表元素必须是非空字符串", source, record_id, key))
+                continue
+            issues.append(ValidationIssue("error", "clear_buffs 必须是字符串或字符串列表", source, record_id, key))
             continue
 
         if key == "exp":
@@ -401,9 +414,36 @@ def _validate_random_pools(
             chance = entry.get("chance")
             if chance is not None and not _is_number_like(chance):
                 issues.append(ValidationIssue("error", f"{entry_path}.chance 必须为数值", source, record_id, f"{entry_path}.chance"))
+            flat_bonus = entry.get("flat_bonus")
+            if flat_bonus is not None and not _is_number_like(flat_bonus):
+                issues.append(ValidationIssue("error", f"{entry_path}.flat_bonus 必须为数值", source, record_id, f"{entry_path}.flat_bonus"))
             attr_bonus = entry.get("attr_bonus")
             if attr_bonus is not None and not isinstance(attr_bonus, dict):
                 issues.append(ValidationIssue("error", f"{entry_path}.attr_bonus 必须是字典", source, record_id, f"{entry_path}.attr_bonus"))
+            state_bonus = entry.get("state_bonus")
+            if state_bonus is not None:
+                if not isinstance(state_bonus, dict):
+                    issues.append(ValidationIssue("error", f"{entry_path}.state_bonus 必须是字典", source, record_id, f"{entry_path}.state_bonus"))
+                else:
+                    for skey, sval in state_bonus.items():
+                        if not str(skey).strip():
+                            issues.append(ValidationIssue("error", f"{entry_path}.state_bonus 包含空键名", source, record_id, f"{entry_path}.state_bonus"))
+                            continue
+                        if not _is_number_like(sval):
+                            issues.append(ValidationIssue("error", f"{entry_path}.state_bonus.{skey} 必须为数值", source, record_id, f"{entry_path}.state_bonus.{skey}"))
+
+        fallback = pool.get("fallback")
+        if fallback is not None:
+            if not isinstance(fallback, dict):
+                issues.append(ValidationIssue("error", f"{pool_path}.fallback 必须是字典", source, record_id, f"{pool_path}.fallback"))
+            else:
+                fb_type = str(fallback.get("type") or "").strip().lower()
+                if fb_type not in ("item", "buff", "outcome"):
+                    issues.append(ValidationIssue("error", f"{pool_path}.fallback.type 必须为 item/buff/outcome", source, record_id, f"{pool_path}.fallback.type"))
+                if not str(fallback.get("id") or "").strip():
+                    issues.append(ValidationIssue("error", f"{pool_path}.fallback.id 不能为空", source, record_id, f"{pool_path}.fallback.id"))
+                if "count" in fallback and not isinstance(fallback.get("count"), int):
+                    issues.append(ValidationIssue("error", f"{pool_path}.fallback.count 必须为整数", source, record_id, f"{pool_path}.fallback.count"))
 
 
 def validate_event_trigger_record(
@@ -435,6 +475,44 @@ def validate_event_trigger_record(
         elif not all(isinstance(m, str) for m in mutex):
             issues.append(ValidationIssue("error", "mutex 列表中的每个元素必须是字符串", source, record_id, "mutex"))
 
+    costs = record.get("costs")
+    if costs is not None:
+        if not isinstance(costs, dict):
+            issues.append(ValidationIssue("error", "costs 必须是字典", source, record_id, "costs"))
+        else:
+            for cost_key, cost_val in costs.items():
+                if not str(cost_key).strip():
+                    issues.append(ValidationIssue("error", "costs 包含空键名", source, record_id, "costs"))
+                    continue
+                if not _is_number_like(cost_val):
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            f"costs.{cost_key} 必须为数值",
+                            source,
+                            record_id,
+                            f"costs.{cost_key}",
+                        )
+                    )
+
+    tags_mode = record.get("tags_mode")
+    if tags_mode is not None:
+        mode = str(tags_mode).strip().lower()
+        if mode not in {"normal", "global", "reverse_global"}:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "tags_mode 必须为 normal/global/reverse_global",
+                    source,
+                    record_id,
+                    "tags_mode",
+                )
+            )
+
+    mutex_by_tag = record.get("mutex_by_tag")
+    if mutex_by_tag is not None and not isinstance(mutex_by_tag, bool):
+        issues.append(ValidationIssue("error", "mutex_by_tag 必须为布尔值", source, record_id, "mutex_by_tag"))
+
     def _validate_item_condition(field: str) -> None:
         value = record.get(field)
         if value is None:
@@ -458,11 +536,32 @@ def validate_event_trigger_record(
     if "random_pools" in record:
         _validate_random_pools(record["random_pools"], issues, source, record_id, "random_pools")
 
+    permanent_attr_delta = record.get("permanent_attr_delta")
+    if permanent_attr_delta is not None:
+        if not isinstance(permanent_attr_delta, dict):
+            issues.append(ValidationIssue("error", "permanent_attr_delta 必须是字典", source, record_id, "permanent_attr_delta"))
+        else:
+            for akey, aval in permanent_attr_delta.items():
+                if not str(akey).strip():
+                    issues.append(ValidationIssue("error", "permanent_attr_delta 包含空键名", source, record_id, "permanent_attr_delta"))
+                    continue
+                if not _is_number_like(aval):
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            f"permanent_attr_delta.{akey} 必须为数值",
+                            source,
+                            record_id,
+                            f"permanent_attr_delta.{akey}",
+                        )
+                    )
+
     known_keys = {
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
         "cooldown_s", "duration_s", "mutex", "guaranteed", "random_pools",
         "requires_item", "requires_no_item",
+        "costs", "tags_mode", "mutex_by_tag",
         # 条件与标签系统（Phase 1）
         "requires_buff", "requires_no_buff",
         "tags", "fail_messages",
@@ -508,9 +607,9 @@ def validate_event_outcome_record(
     known_keys = {
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
-        "guaranteed", "random_pools", "effects",
+        "guaranteed", "random_pools", "effects", "permanent_attr_delta",
         # 等级/经验联动（Phase 4）
-        "exp", "min_level",
+        "exp", "min_level", "clear_buffs",
     }
     for key in record:
         if key not in known_keys:
@@ -561,6 +660,59 @@ def validate_passive_buff_record(
     on_trigger = record.get("on_trigger")
     if on_trigger is not None and not isinstance(on_trigger, dict):
         issues.append(ValidationIssue("error", "on_trigger 必须是字典", source, record_id, "on_trigger"))
+    elif isinstance(on_trigger, dict):
+        duration_formula = on_trigger.get("duration_formula")
+        if duration_formula is not None:
+            if not isinstance(duration_formula, dict):
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "on_trigger.duration_formula 必须是字典",
+                        source,
+                        record_id,
+                        "on_trigger.duration_formula",
+                    )
+                )
+            else:
+                for fkey in ("base", "min", "max"):
+                    fval = duration_formula.get(fkey)
+                    if fval is not None and not _is_number_like(fval):
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                f"on_trigger.duration_formula.{fkey} 必须为数值",
+                                source,
+                                record_id,
+                                f"on_trigger.duration_formula.{fkey}",
+                            )
+                        )
+                terms = duration_formula.get("terms")
+                if terms is not None:
+                    if not isinstance(terms, list):
+                        issues.append(
+                            ValidationIssue(
+                                "error",
+                                "on_trigger.duration_formula.terms 必须是列表",
+                                source,
+                                record_id,
+                                "on_trigger.duration_formula.terms",
+                            )
+                        )
+                    else:
+                        for i, term in enumerate(terms):
+                            tpath = f"on_trigger.duration_formula.terms[{i}]"
+                            if not isinstance(term, dict):
+                                issues.append(ValidationIssue("error", f"{tpath} 必须是字典", source, record_id, tpath))
+                                continue
+                            if not str(term.get("attr") or "").strip():
+                                issues.append(
+                                    ValidationIssue("error", f"{tpath}.attr 不能为空", source, record_id, f"{tpath}.attr")
+                                )
+                            coeff = term.get("coeff")
+                            if coeff is None or not _is_number_like(coeff):
+                                issues.append(
+                                    ValidationIssue("error", f"{tpath}.coeff 必须为数值", source, record_id, f"{tpath}.coeff")
+                                )
 
     known_keys = {
         "id", "name",

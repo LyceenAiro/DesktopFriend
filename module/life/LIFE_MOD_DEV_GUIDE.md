@@ -300,6 +300,7 @@ mod/{your_mod}/
 | `min_level` | int | `0` | 使用物品的最低等级要求（0.3） |
 | `passive_exp_bonus` | number | `0` | 持有此物品时每 tick 被动经验加成（0.3） |
 | `permanent_attr_delta` | dict | — | 使用物品时永久修改属性（0.3），格式为 `{"attr_id": delta}` |
+| `clear_buffs` | string / list | — | 使用时移除指定 buff（如 `"ill"` 或 `["ill", "depressed"]`） |
 
 其余状态/持续/上下限字段与 buff 一致。
 
@@ -438,6 +439,9 @@ mod/{your_mod}/
 | `tags` | list | 标签列表，用于标签限制系统（参见[第 15 节](#15-标签限制系统tag-restriction)） |
 | `requires_item` | string / list | 背包条件（必须拥有），未满足时触发失败 |
 | `requires_no_item` | string / list | 背包条件（必须不拥有），不满足时触发失败 |
+| `costs` | dict | 触发前状态消耗，格式如 `{"energy": 100, "psc": 50}` |
+| `tags_mode` | string | 标签模式：`normal` / `global` / `reverse_global` |
+| `mutex_by_tag` | bool | `true` 时与执行中且共享任一 tag 的事件互斥 |
 | `exp` | number | 触发器给予的经验值（0.3） |
 | `min_level` | int | 触发的最低等级要求（0.3） |
 | `guaranteed` | dict | 必定触发的效果 |
@@ -463,8 +467,12 @@ mod/{your_mod}/
 | `type` | `"item"` / `"buff"` / `"outcome"` |
 | `id` | 对应实体 ID |
 | `chance` | 基础概率（百分比，0~100） |
+| `flat_bonus` | 常量概率修正（可为负），在 chance 基础上直接叠加 |
 | `count` | 仅 item 类型：获取数量 |
 | `attr_bonus` | 属性加成字典 `{"attr_id": multiplier}`；有效概率 = max(0, base_chance + Σ(attr_val × mult)) |
+| `state_bonus` | 状态加成字典 `{"state_id": multiplier}`；有效概率额外叠加 Σ(state_val × mult) |
+
+每个 pool 还支持可选 `fallback`：当 roll 落入 no-fire 区间时触发该条目。结构与 entry 一致（`type/id/count`）。
 
 **归一化算法**：
 1. `base_no_fire = max(0, 100 − Σbase_chances)`（不受属性影响）
@@ -526,6 +534,7 @@ mod/{your_mod}/
 | `guaranteed` | dict | 与触发器相同，必定触发的效果 |
 | `random_pools` | list | 与触发器相同，随机抽取池 |
 | `effects` | dict | 即时状态变更，格式为 `{state_id: delta}` |
+| `clear_buffs` | string / list | 触发结果时移除指定 buff |
 | `exp` | number | 触发结果时给予的经验值（0.3） |
 | `min_level` | int | 最低等级要求，用于分支结果过滤（0.3） |
 
@@ -586,7 +595,22 @@ mod/{your_mod}/
 | 字段 | 说明 |
 |------|------|
 | `buff_id` | 应用指定 buff |
+| `duration_formula` | buff 持续 tick 公式（仅 `buff_id` 生效时），支持 `base`、`terms`、`min`、`max` |
 | 其他 | 直接状态/营养变化，字段与 buff 一致（如 `hp: -5`） |
+
+`duration_formula` 示例：
+
+```json
+{
+  "buff_id": "ill",
+  "duration_formula": {
+    "base": 1200,
+    "terms": [{"attr": "vit", "coeff": -60}],
+    "min": 60,
+    "max": 1200
+  }
+}
+```
 
 ### 示例
 

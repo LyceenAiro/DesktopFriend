@@ -13,6 +13,7 @@ class LifeSqliteStore:
 
     def __init__(self, db_path: str | Path = "data/life.sqlite"):
         self.client = SqliteClient(db_path)
+        _log.DEBUG(f"[Life][Store]初始化 SQLite 存档: {self.client.db_path}")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -37,7 +38,7 @@ class LifeSqliteStore:
             """,
             (profile_id, payload),
         )
-        _log.INFO(f"[Life]保存存档: {profile_id}")
+        _log.DEBUG(f"[Life][Store]保存存档: {profile_id} bytes={len(payload.encode('utf-8'))}")
 
     def load_profile(self, profile_id: str) -> dict[str, Any] | None:
         row = self.client.query_one(
@@ -46,10 +47,13 @@ class LifeSqliteStore:
         )
 
         if not row:
+            _log.DEBUG(f"[Life][Store]存档不存在: {profile_id}")
             return None
 
         try:
-            return json.loads(row[0])
+            payload = json.loads(row[0])
+            _log.DEBUG(f"[Life][Store]读取存档成功: {profile_id}")
+            return payload
         except Exception as exc:
-            _log.ERROR(f"[Life]读取存档失败 {profile_id}: {exc}")
+            _log.EXCEPTION(f"[Life][Store]读取存档失败 {profile_id}", exc)
             return None

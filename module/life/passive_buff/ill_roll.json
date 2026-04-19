@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ill_roll",
+    "name": "随机生病检测",
+    "base_chance": 0.1,
+    "on_trigger": {
+      "guaranteed": {
+        "items": [],
+        "buffs": [],
+        "outcomes": []
+      },
+      "random_pools": [
+        {
+          "entries": [
+            {
+              "type": "outcome",
+              "id": "ill_resist",
+              "chance": 95,
+              "attr_bonus": {"vit": 1}
+            }
+          ],
+          "fallback": {
+            "type": "outcome",
+            "id": "ill_infected"
+          }
+        }
+      ]
+    }
+  }
+]

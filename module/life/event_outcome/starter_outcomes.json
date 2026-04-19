@@ -1,0 +1,303 @@
+[
+  {
+    "id": "wild_find_water",
+    "name": "找到饮用水",
+    "name_i18n_key": "life.outcome.wild_find_water.name",
+    "desc": "探索中发现可饮用水源。",
+    "desc_i18n_key": "life.outcome.wild_find_water.desc",
+    "effects": {
+      "happy": 10
+    },
+    "guaranteed": {
+      "items": [
+        {
+          "id": "water",
+          "count": 2
+        }
+      ],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": [
+      {
+        "entries": [
+          {
+            "type": "item",
+            "id": "water",
+            "count": 1,
+            "chance": 50
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "wild_find_food",
+    "name": "找到食物",
+    "name_i18n_key": "life.outcome.wild_find_food.name",
+    "desc": "探索中搜集到一些可食用资源。",
+    "desc_i18n_key": "life.outcome.wild_find_food.desc",
+    "effects": {
+      "happy": 10
+    },
+    "guaranteed": {
+      "items": [
+        {
+          "id": "food",
+          "count": 2
+        }
+      ],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": [
+      {
+        "entries": [
+          {
+            "type": "item",
+            "id": "food",
+            "count": 1,
+            "chance": 50
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "wild_find_medicine",
+    "name": "找到药物",
+    "name_i18n_key": "life.outcome.wild_find_medicine.name",
+    "desc": "探索中意外找到药物补给。",
+    "desc_i18n_key": "life.outcome.wild_find_medicine.desc",
+    "effects": {
+      "happy": 10
+    },
+    "guaranteed": {
+      "items": [
+        {
+          "id": "medicine",
+          "count": 1
+        }
+      ],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "wild_find_temple_pass",
+    "name": "找到神殿探索证明",
+    "name_i18n_key": "life.outcome.wild_find_temple_pass.name",
+    "desc": "探索中发现了进入神殿的凭证。",
+    "desc_i18n_key": "life.outcome.wild_find_temple_pass.desc",
+    "guaranteed": {
+      "items": [
+        {
+          "id": "temple_pass",
+          "count": 1
+        }
+      ],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "temple_find_gem",
+    "name": "发现宝石",
+    "name_i18n_key": "life.outcome.temple_find_gem.name",
+    "desc": "在神殿内部发现了神秘宝石。",
+    "desc_i18n_key": "life.outcome.temple_find_gem.desc",
+    "effects": {
+      "happy": 100
+    },
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": [
+      {
+        "entries": [
+          {
+            "type": "item",
+            "id": "str_gem",
+            "count": 1,
+            "chance": 50
+          },
+          {
+            "type": "item",
+            "id": "vit_gem",
+            "count": 1,
+            "chance": 50
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "temple_fountain",
+    "name": "欣赏神殿喷泉",
+    "name_i18n_key": "life.outcome.temple_fountain.name",
+    "desc": "喷泉能量让状态全面恢复。",
+    "desc_i18n_key": "life.outcome.temple_fountain.desc",
+    "effects": {
+      "happy": 100,
+      "hp": 20,
+      "energy": 100,
+      "psc": 100
+    },
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "temple_trap",
+    "name": "遭遇陷阱",
+    "name_i18n_key": "life.outcome.temple_trap.name",
+    "desc": "神殿中的陷阱造成重创。",
+    "desc_i18n_key": "life.outcome.temple_trap.desc",
+    "effects": {
+      "hp": -150,
+      "happy": -100
+    },
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "temple_germ",
+    "name": "遭遇病菌",
+    "name_i18n_key": "life.outcome.temple_germ.name",
+    "desc": "在神殿中感染病菌。",
+    "desc_i18n_key": "life.outcome.temple_germ.desc",
+    "guaranteed": {
+      "items": [],
+      "buffs": [
+        "ill"
+      ],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "ill_resist",
+    "name": "抵抗病菌",
+    "name_i18n_key": "life.outcome.ill_resist.name",
+    "desc": "这次成功抵抗了病菌侵袭。",
+    "desc_i18n_key": "life.outcome.ill_resist.desc",
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "ill_infected",
+    "name": "生病",
+    "name_i18n_key": "life.outcome.ill_infected.name",
+    "desc": "感染病菌并出现不适症状。",
+    "desc_i18n_key": "life.outcome.ill_infected.desc",
+    "guaranteed": {
+      "items": [],
+      "buffs": [
+        "ill"
+      ],
+      "outcomes": []
+    },
+    "permanent_attr_delta": {
+      "vit": 0.01
+    },
+    "random_pools": []
+  },
+  {
+    "id": "sleep_insomnia",
+    "name": "失眠",
+    "name_i18n_key": "life.outcome.sleep_insomnia.name",
+    "desc": "无法入睡，状态更差了。",
+    "desc_i18n_key": "life.outcome.sleep_insomnia.desc",
+    "effects": {
+      "happy": -50,
+      "psc": -50
+    },
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "sleep_success",
+    "name": "睡着了",
+    "name_i18n_key": "life.outcome.sleep_success.name",
+    "desc": "成功入睡并获得恢复效果。",
+    "desc_i18n_key": "life.outcome.sleep_success.desc",
+    "guaranteed": {
+      "items": [],
+      "buffs": [
+        "sleep"
+      ],
+      "outcomes": []
+    },
+    "random_pools": []
+  },
+  {
+    "id": "temple_find_salt_crystal",
+    "name": "找到盐晶体",
+    "name_i18n_key": "life.outcome.temple_find_salt_crystal.name",
+    "desc": "在神殿中发现了稀有的盐晶体。",
+    "desc_i18n_key": "life.outcome.temple_find_salt_crystal.desc",
+    "effects": {
+      "happy": 10
+    },
+    "guaranteed": {
+      "items": [],
+      "buffs": [],
+      "outcomes": []
+    },
+    "random_pools": [
+      {
+        "entries": [
+          {
+            "type": "item",
+            "id": "NaCl",
+            "count": 1,
+            "chance": 20
+          },
+          {
+            "type": "item",
+            "id": "NaCl",
+            "count": 2,
+            "chance": 20
+          },
+          {
+            "type": "item",
+            "id": "NaCl",
+            "count": 3,
+            "chance": 20
+          },
+          {
+            "type": "item",
+            "id": "NaCl",
+            "count": 4,
+            "chance": 20
+          },
+          {
+            "type": "item",
+            "id": "NaCl",
+            "count": 5,
+            "chance": 20
+          }
+        ]
+      }
+    ]
+  }
+]

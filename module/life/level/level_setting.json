@@ -1,0 +1,9 @@
+{
+  "initial_exp_required": 20.0,
+  "passive_exp_per_tick": 0.01,
+  "growth_ranges": [
+    {"from_level": 1, "to_level": 10, "exp_growth": 20.0},
+    {"from_level": 11, "to_level": 20, "exp_growth": 100.0},
+    {"from_level": 21, "to_level": 30, "exp_growth": 500.0}
+  ]
+}

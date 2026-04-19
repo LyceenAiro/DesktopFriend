@@ -1,0 +1,22 @@
+[
+  {
+    "id": "first_aid",
+    "name": "急救",
+    "i18n_key": "life.tag.first_aid",
+    "use_restricted_i18n_key": "life.tag.first_aid.use_restricted",
+    "fire_restricted_i18n_key": "life.tag.first_aid.fire_restricted",
+    "buff_id": "dying",
+    "color": "#e06c75",
+    "global_event": true
+  },
+  {
+    "id": "sleep",
+    "name": "睡眠",
+    "i18n_key": "life.tag.sleep",
+    "use_restricted_i18n_key": "life.tag.sleep.use_restricted",
+    "fire_restricted_i18n_key": "life.tag.sleep.fire_restricted",
+    "buff_id": "sleep",
+    "color": "#3d7be0",
+    "global_event": true
+  }
+]

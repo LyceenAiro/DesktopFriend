@@ -1,0 +1,9 @@
+{
+  "classes": ["food"],
+  "class_definitions": {
+    "food": {
+      "name": "食物",
+      "name_i18n_key": "life.item_class.food"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "vit",
+    "name": "体质",
+    "i18n_key": "life.attr.vit",
+    "color": "#e06c75",
+    "initial": 5,
+    "order": 10,
+    "char_level_bonuses": [
+      {"type": "per_levels", "every": 5, "bonus": {"vit": 1}, "min_level_offset": 0}
+    ]
+  },
+  {
+    "id": "str",
+    "name": "力量",
+    "i18n_key": "life.attr.str",
+    "color": "#d4834a",
+    "initial": 3,
+    "order": 20,
+    "char_level_bonuses": [
+      {"type": "per_levels", "every": 10, "bonus": {"str": 1}, "min_level_offset": 0}
+    ]
+  }
+]

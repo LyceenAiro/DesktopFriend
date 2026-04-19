@@ -1,0 +1,37 @@
+[
+  {
+    "id": "ill",
+    "name": "生病",
+    "name_i18n_key": "life.buff.ill.name",
+    "desc": "身体不适，持续损耗状态。",
+    "desc_i18n_key": "life.buff.ill.desc",
+    "hps": -0.5,
+    "happys": -0.5,
+    "energy_max": "-40%",
+    "psc_max": "-40%",
+    "hpst": 120,
+    "hpsr": "refresh"
+  },
+  {
+    "id": "sleep",
+    "name": "睡眠",
+    "name_i18n_key": "life.buff.sleep.name",
+    "desc": "进入睡眠状态，快速恢复精神与体力。",
+    "desc_i18n_key": "life.buff.sleep.desc",
+    "hps": 0.01,
+    "energys": 2,
+    "pscs": 6,
+    "happys": 0.2,
+    "hpst": 180,
+    "hpsr": "refresh"
+  },
+  {
+    "id": "depressed",
+    "name": "抑郁",
+    "name_i18n_key": "life.buff.depressed.name",
+    "desc": "心情低落，体质表现受到压制。",
+    "desc_i18n_key": "life.buff.depressed.desc",
+    "happys": -0.01,
+    "vit": -5
+  }
+]

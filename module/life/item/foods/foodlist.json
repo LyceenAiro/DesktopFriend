@@ -1,0 +1,26 @@
+[
+  {
+    "id": "water",
+    "name": "饮用水",
+    "name_i18n_key": "life.item.water.name",
+    "desc": "基础补给品，补充大量水分并获得少量经验。",
+    "desc_i18n_key": "life.item.water.desc",
+    "usable": true,
+    "exp": 1,
+    "nutrition": {
+      "hydration": 1000
+    }
+  },
+  {
+    "id": "food",
+    "name": "食物",
+    "name_i18n_key": "life.item.food.name",
+    "desc": "基础食物，补充饱腹并获得少量经验。",
+    "desc_i18n_key": "life.item.food.desc",
+    "usable": true,
+    "exp": 1,
+    "nutrition": {
+      "satiety_meter": 2000
+    }
+  }
+]

@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from util.log import _log
+
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     LANG_DIR = Path(sys._MEIPASS) / "lang"
 else:
@@ -26,6 +28,7 @@ def attach_lang_dir(lang_dir: str | Path) -> bool:
         return False
     _extra_lang_dirs.append(path)
     _invalidate_i18n_cache()
+    _log.DEBUG(f"[i18n]附加语言目录: {path}")
     return True
 
 
@@ -35,6 +38,7 @@ def detach_lang_dir(lang_dir: str | Path) -> bool:
         return False
     _extra_lang_dirs.remove(path)
     _invalidate_i18n_cache()
+    _log.DEBUG(f"[i18n]移除语言目录: {path}")
     return True
 
 
@@ -78,7 +82,8 @@ def _load_locale_bundle(locale: str) -> Dict[str, str]:
                 data = json.load(f)
             if isinstance(data, dict):
                 merged.update({str(k): str(v) if not isinstance(v, str) else v for k, v in data.items()})
-        except Exception:
+        except Exception as exc:
+            _log.WARN(f"[i18n]加载语言文件失败: locale={normalized} path={file_path} error={exc}")
             continue
 
     _cache[normalized] = merged
@@ -105,6 +110,7 @@ def get_locale() -> str:
     except Exception:
         locale = FALLBACK_LOCALE
     _active_locale = locale or FALLBACK_LOCALE
+    _log.INFO(f"[i18n]当前语言环境: {_active_locale}")
     return _active_locale
 
 

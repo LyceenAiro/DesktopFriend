@@ -1,0 +1,63 @@
+[
+  {
+    "id": "well_fed",
+    "name": "非常饱",
+    "desc": "吃的非常饱，感觉干什么都很有干劲。",
+    "happys": 0.03,
+    "energys": 0.5,
+    "satiety_meters": -0.1
+  },
+  {
+    "id": "full",
+    "name": "饱腹",
+    "desc": "吃饱了，很满足。",
+    "happys": 0.01,
+    "energys": 0.2
+  },
+  {
+    "id": "hungry",
+    "name": "饥饿",
+    "desc": "肚子空空，很想吃点什么东西。",
+    "energy_max": "-15%",
+    "happys": -0.01
+  },
+  {
+    "id": "starving",
+    "name": "严重饥饿",
+    "desc": "非常的饿，感觉一点力气也没有。",
+    "hps": -2,
+    "happys": -2,
+    "energy_max": "-30%"
+  },
+  {
+    "id": "refreshed",
+    "name": "滋润",
+    "desc": "水分充足，喉咙感觉很舒适。",
+    "happys": 0.01
+  },
+  {
+    "id": "water_intox",
+    "name": "水中毒",
+    "desc": "喝太多水了，电解质紊乱。",
+    "hps": -2,
+    "psc_max": "-20%",
+    "energy_max": "-40%"
+  },
+  {
+    "id": "thirsty",
+    "name": "口渴",
+    "desc": "缺水，精神与体力上限下降。",
+    "happys": -0.01,
+    "psc_max": "-5%",
+    "energy_max": "-8%"
+  },
+  {
+    "id": "dehydrated",
+    "name": "严重缺水",
+    "desc": "非常口渴，嗓子完全干掉了。",
+    "hps": -2,
+    "happys": -2,
+    "psc_max": "-20%",
+    "energy_max": "-30%"
+  }
+]

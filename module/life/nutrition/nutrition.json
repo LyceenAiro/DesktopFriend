@@ -1,0 +1,66 @@
+[
+  {
+    "id": "satiety_meter",
+    "name": "饱腹",
+    "i18n_key": "life.nutrition.satiety_meter",
+    "default": 3900,
+    "min": 0,
+    "max": 6000,
+    "order": 10,
+    "decay": 0.2,
+    "effects": [
+      {
+        "min": 5500,
+        "max": 6001,
+        "buff_id": "well_fed"
+      },
+      {
+        "min": 1500,
+        "max": 5500,
+        "buff_id": "full"
+      },
+      {
+        "min": 0,
+        "max": 1500,
+        "buff_id": "hungry"
+      },
+      {
+        "min": 0,
+        "max": 0,
+        "buff_id": "starving"
+      }
+    ]
+  },
+  {
+    "id": "hydration",
+    "name": "水分",
+    "i18n_key": "life.nutrition.hydration",
+    "default": 3200,
+    "min": 0,
+    "max": 4000,
+    "order": 20,
+    "decay": 0.2,
+    "effects": [
+      {
+        "min": 3600,
+        "max": 4001,
+        "buff_id": "water_intox"
+      },
+      {
+        "min": 2000,
+        "max": 3600,
+        "buff_id": "refreshed"
+      },
+      {
+        "min": 0,
+        "max": 800,
+        "buff_id": "thirsty"
+      },
+      {
+        "min": 0,
+        "max": 0,
+        "buff_id": "dehydrated"
+      }
+    ]
+  }
+]

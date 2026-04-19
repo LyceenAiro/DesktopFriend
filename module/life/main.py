@@ -69,6 +69,8 @@ class LifeSystem:
     - SQLite profile save/load.
     """
 
+    _RECENT_EVENT_LOG_MAX = 200
+
     def __init__(
         self,
         buff_dir: str | Path = "module/life/buff",
@@ -121,6 +123,8 @@ class LifeSystem:
         self._trigger_cooldowns: dict[str, float] = {}  # trigger_id → 可用时间戳
         self._trigger_executing: dict[str, float] = {}  # trigger_id → 完成时间戳 (正在执行中)
         self._completed_trigger_results: list[dict[str, Any]] = []  # 执行完成事件队列（供 UI 消费）
+        self._recent_event_logs: list[dict[str, Any]] = []  # 最近事件日志（长历史，供 UI 聚合后截断）
+        self._recent_event_log_seq: int = 0  # 最近事件日志序号（用于稳定检测变化）
         self._inventory_passive_attrs: dict[str, float] = {}  # 背包被动属性加成缓存（按需重算）
 
         # 全局等级系统运行时数据
@@ -145,6 +149,10 @@ class LifeSystem:
 
         self.profile = self._create_default_profile()
         self.reload_registries()
+        _log.INFO(
+            f"[Life]LifeSystem 初始化完成 states={len(self.state_definitions)} nutrition={len(self.nutrition_definitions)} "
+            f"attrs={len(self.attr_definitions)} inventory={len(self.profile.inventory)}"
+        )
 
 
     def _resolve_name(self, template: str) -> str:
@@ -1506,6 +1514,7 @@ class LifeSystem:
 
         if consume:
             self._recompute_inventory_passive_attrs()
+        _log.INFO(f"[Life][Item]使用物品成功 id={item_id} count={use_count} consume={consume}")
         return True
 
     def add_item(self, item_id: str, count: int = 1) -> bool:
@@ -1522,6 +1531,7 @@ class LifeSystem:
             delta = max(1, int(count))
             self.profile.inventory[item_id] = self.profile.inventory.get(item_id, 0) + delta
         self._recompute_inventory_passive_attrs()
+        _log.INFO(f"[Life][Item]获得物品 id={item_id} count={self.profile.inventory.get(item_id, 0)}")
         return True
 
     def set_item_count(self, item_id: str, count: int) -> bool:
@@ -1601,6 +1611,7 @@ class LifeSystem:
         current = self.profile.inventory.get(item_id, 0)
         delta = max(1, int(count))
         if current < delta:
+            _log.WARN(f"[Life][Item]移除物品失败 id={item_id} have={current} need={delta}")
             return False
         left = current - delta
         if left <= 0:
@@ -1608,12 +1619,16 @@ class LifeSystem:
         else:
             self.profile.inventory[item_id] = left
         self._recompute_inventory_passive_attrs()
+        _log.INFO(f"[Life][Item]移除物品 id={item_id} delta={delta} left={self.profile.inventory.get(item_id, 0)}")
         return True
 
     def get_inventory_snapshot(self) -> list[dict[str, Any]]:
         snapshot: list[dict[str, Any]] = []
         for item_id, count in sorted(self.profile.inventory.items()):
-            item_info = self.item_registry.get(item_id, {})
+            item_info = self.item_registry.get(item_id)
+            if not isinstance(item_info, dict):
+                # 兼容旧存档：未知物品保留在 profile.inventory，但不展示在背包列表。
+                continue
             cooldown_remaining = self.get_item_cooldown_remaining(item_id)
             can, reason = self.can_use_item_with_reason(item_id)
             snapshot.append(
@@ -1857,6 +1872,17 @@ class LifeSystem:
         self.profile.active_effects = keep
         return len(self.profile.active_effects) < before
 
+    def _clear_buffs_from_record(self, record: dict[str, Any]) -> None:
+        clear_buffs = record.get("clear_buffs")
+        if clear_buffs is None:
+            return
+        raw_ids = [clear_buffs] if isinstance(clear_buffs, str) else list(clear_buffs) if isinstance(clear_buffs, list) else []
+        for buff_id in raw_ids:
+            bid = str(buff_id).strip()
+            if not bid:
+                continue
+            self.clear_effect(bid)
+
     def _apply_record(self, record: dict[str, Any], source: str, duration_override: int | None = None) -> None:
         record_id = str(record.get("id") or record.get("name") or "anonymous")
         record_name = self._resolve_record_name(record, record_id)
@@ -1873,6 +1899,8 @@ class LifeSystem:
                 if random.random() * 100 < abs(chance_val):
                     self.clear_effect(record_id)
                 return  # 负值始终跳过普通应用流程
+
+        self._clear_buffs_from_record(record)
 
         for attr in BASE_ATTRS:
             if attr in record:
@@ -2152,11 +2180,50 @@ class LifeSystem:
                 if isinstance(on_trigger, dict):
                     buff_id = str(on_trigger.get("buff_id") or "").strip()
                     if buff_id:
-                        self.apply_buff(buff_id)
+                        duration_override = self._resolve_duration_formula(on_trigger)
+                        self.apply_buff(buff_id, duration_override=duration_override)
                     else:
-                        # on_trigger 直接是 buff-like 效果描述时，直接应用
-                        self._apply_record(on_trigger, source="passive_buff")
+                        # on_trigger 支持事件式 guaranteed/random_pools；
+                        # 若未提供这些字段，则按 buff-like 记录直接应用。
+                        result_log: list[dict[str, Any]] = []
+                        self._execute_event_guaranteed(on_trigger, result_log)
+                        self._execute_event_random_pools(on_trigger, result_log)
+                        if not result_log:
+                            self._apply_record(on_trigger, source="passive_buff")
+                        self._append_recent_result_logs(
+                            trigger_id=str(pb_id),
+                            trigger_name=str(record.get("name") or pb_id),
+                            source="passive",
+                            result_log=result_log,
+                            add_none_when_empty=False,
+                        )
                 _log.DEBUG(f"[Life][passive_buff]触发: {pb_id}")
+
+    def _resolve_duration_formula(self, on_trigger: dict[str, Any]) -> int | None:
+        formula = on_trigger.get("duration_formula")
+        if not isinstance(formula, dict):
+            return None
+        base = self._to_float_safe(formula.get("base"), 0.0)
+        total = base
+        terms = formula.get("terms")
+        if isinstance(terms, list):
+            for term in terms:
+                if not isinstance(term, dict):
+                    continue
+                attr_key = str(term.get("attr") or "").strip()
+                if not attr_key:
+                    continue
+                coeff = self._to_float_safe(term.get("coeff"), 0.0)
+                total += self._effective_attr(attr_key) * coeff
+        lower = formula.get("min")
+        upper = formula.get("max")
+        if lower is not None:
+            total = max(float(lower), total)
+        if upper is not None:
+            total = min(float(upper), total)
+        if total <= 0:
+            return None
+        return max(1, int(round(total)))
 
     def _tick_exp(self) -> None:
         """每 tick 增加被动经验并处理升级。满级后经验继续积累但不再触发升级。"""
@@ -2219,71 +2286,6 @@ class LifeSystem:
                         if bonus_attr in self.profile.attrs:
                             self.profile.attrs[bonus_attr] += delta
                             _log.DEBUG(f"[Life][Level]等级修正 Lv.{new_level}: {bonus_attr}+{delta}")
-
-
-        """每 tick 检测被动 buff 触发条件，按概率随机激活。"""
-        if not self.passive_buff_registry:
-            return
-        active_ids = {e.effect_id for e in self.profile.active_effects}
-        for pb_id, record in self.passive_buff_registry.items():
-            # requires_buff 条件（列表中任意一个存在即满足）
-            rb = record.get("requires_buff")
-            if rb is not None:
-                check_ids = [rb] if isinstance(rb, str) else list(rb)
-                if not any(str(bid) in active_ids for bid in check_ids if bid):
-                    continue
-            # requires_no_buff 条件（列表中任意一个存在则跳过）
-            rnb = record.get("requires_no_buff")
-            if rnb is not None:
-                check_ids = [rnb] if isinstance(rnb, str) else list(rnb)
-                if any(str(bid) in active_ids for bid in check_ids if bid):
-                    continue
-            # attr_conditions 条件（全部满足才继续）
-            attr_conds = record.get("attr_conditions")
-            if isinstance(attr_conds, list):
-                cond_ok = True
-                for cond in attr_conds:
-                    if not isinstance(cond, dict):
-                        continue
-                    attr_key = str(cond.get("attr") or "").strip()
-                    if not attr_key:
-                        continue
-                    attr_val = self._effective_attr(attr_key)
-                    cond_min = cond.get("min")
-                    cond_max = cond.get("max")
-                    if cond_min is not None and attr_val < float(cond_min):
-                        cond_ok = False
-                        break
-                    if cond_max is not None and attr_val > float(cond_max):
-                        cond_ok = False
-                        break
-                if not cond_ok:
-                    continue
-            # 计算有效触发概率（基础概率 + 属性加成）
-            base_chance = float(record.get("base_chance", 0.0))
-            attr_bonus_map = record.get("attr_bonus")
-            bonus = 0.0
-            if isinstance(attr_bonus_map, dict):
-                for attr_key, bonus_per_point in attr_bonus_map.items():
-                    attr_val = self._effective_attr(str(attr_key))
-                    try:
-                        bonus += float(attr_val) * float(bonus_per_point)
-                    except Exception:
-                        pass
-            effective_chance = max(0.0, base_chance + bonus)
-            if effective_chance <= 0.0:
-                continue
-            # 随机触发
-            if random.random() * 100.0 < effective_chance:
-                on_trigger = record.get("on_trigger")
-                if isinstance(on_trigger, dict):
-                    buff_id = str(on_trigger.get("buff_id") or "").strip()
-                    if buff_id:
-                        self.apply_buff(buff_id)
-                    else:
-                        # on_trigger 本身作为 buff-like 记录直接应用（即时状态/营养效果）
-                        self._apply_record(on_trigger, source="passive_buff")
-                _log.DEBUG(f"[Life][passive_buff]触发: {pb_id}")
 
     def _refresh_attr_range_effects(self) -> None:
         max_caps = {
@@ -3006,6 +3008,36 @@ class LifeSystem:
             finish_at = self._trigger_executing[trigger_id]
             if time.time() < finish_at:
                 return False, "executing"
+
+        now = time.time()
+        running_ids = [
+            tid
+            for tid, finish_at in self._trigger_executing.items()
+            if tid != trigger_id and finish_at > now
+        ]
+
+        tags_mode = str(trigger.get("tags_mode") or "normal").strip().lower()
+        if tags_mode == "reverse_global" and running_ids:
+            return False, "reverse_global_busy"
+        for running_id in running_ids:
+            running_trigger = self.event_trigger_registry.get(running_id, {})
+            running_mode = str(running_trigger.get("tags_mode") or "normal").strip().lower()
+            if running_mode == "global":
+                return False, f"global_busy:{running_id}"
+        if tags_mode == "global" and running_ids:
+            return False, "global_requires_idle"
+
+        if bool(trigger.get("mutex_by_tag", False)):
+            trigger_tags: set[str] = set(str(t).strip() for t in (trigger.get("tags") or []) if str(t).strip())
+            if trigger_tags:
+                for running_id in running_ids:
+                    running_trigger = self.event_trigger_registry.get(running_id, {})
+                    running_tags: set[str] = set(
+                        str(t).strip() for t in (running_trigger.get("tags") or []) if str(t).strip()
+                    )
+                    common_tags = trigger_tags & running_tags
+                    if common_tags:
+                        return False, f"tag_mutex:{sorted(common_tags)[0]}"
         # 自身 CD
         if self.get_trigger_cooldown_remaining(trigger_id) > 0:
             return False, "on_cooldown"
@@ -3074,6 +3106,23 @@ class LifeSystem:
             except Exception:
                 pass
 
+        # 成本校验（仅校验 state，真实扣除在 fire_trigger）
+        costs = trigger.get("costs")
+        if isinstance(costs, dict):
+            for state_key, raw_cost in costs.items():
+                key = str(state_key).strip()
+                if key not in self.state_keys:
+                    continue
+                try:
+                    cost_val = float(raw_cost)
+                except Exception:
+                    continue
+                if cost_val <= 0:
+                    continue
+                current_val = float(self.profile.states.get(key, 0.0))
+                if current_val < cost_val:
+                    return False, f"insufficient_state:{key}"
+
         return True, ""
 
     def get_trigger_fail_message(self, trigger_id: str, reason: str) -> str | None:
@@ -3122,6 +3171,9 @@ class LifeSystem:
         trigger = self.event_trigger_registry[trigger_id]
         trigger_name = self._resolve_record_name(trigger, trigger_id)
 
+        # 通过 can_fire_trigger 后立即扣除成本，确保执行中事件不会规避消耗。
+        self._apply_trigger_costs(trigger)
+
         # 执行时间：duration_s > 0 时先进入执行状态，延迟产出结果
         duration_s = trigger.get("duration_s")
         has_duration = False
@@ -3136,6 +3188,15 @@ class LifeSystem:
                 pass
 
         if has_duration:
+            _log.INFO(f"[Life][Event]开始执行 trigger={trigger_id} name={trigger_name} duration={float(duration_s)}")
+            self._append_recent_event_log(
+                {
+                    "type": "pending",
+                    "source": "trigger",
+                    "trigger_id": trigger_id,
+                    "trigger_name": trigger_name,
+                }
+            )
             # 尚未完成，返回 pending 结果（UI 可据此显示进度）
             return {
                 "trigger_id": trigger_id,
@@ -3171,12 +3232,55 @@ class LifeSystem:
         self._execute_event_random_pools(trigger, result_log)
 
         _log.DEBUG(f"[Life][Event]完成触发: {trigger_id} 结果数={len(result_log)}")
+        _log.INFO(f"[Life][Event]执行完成 trigger={trigger_id} name={trigger_name} results={len(result_log)}")
+        self._append_recent_event_log(
+            {
+                "type": "completed",
+                "source": "trigger",
+                "trigger_id": trigger_id,
+                "trigger_name": trigger_name,
+            }
+        )
+        self._append_recent_result_logs(
+            trigger_id=trigger_id,
+            trigger_name=trigger_name,
+            source="trigger",
+            result_log=result_log,
+            add_none_when_empty=True,
+        )
+        for entry in result_log:
+            et = str(entry.get("type") or "")
+            eid = str(entry.get("id") or "")
+            if et == "item":
+                _log.INFO(f"[Life][Event][Result] trigger={trigger_id} type=item id={eid} count={int(entry.get('count', 1))}")
+            elif et == "outcome":
+                _log.INFO(f"[Life][Event][Result] trigger={trigger_id} type=outcome id={eid} name={entry.get('name', eid)}")
+            elif et == "buff":
+                _log.INFO(f"[Life][Event][Result] trigger={trigger_id} type=buff id={eid}")
         return {
             "trigger_id": trigger_id,
             "trigger_name": trigger_name,
             "pending": False,
             "results": result_log,
         }
+
+    def _apply_trigger_costs(self, trigger: dict[str, Any]) -> None:
+        costs = trigger.get("costs")
+        if not isinstance(costs, dict):
+            return
+        trigger_id = str(trigger.get("id") or trigger.get("name") or "anonymous")
+        for state_key, raw_cost in costs.items():
+            key = str(state_key).strip()
+            if key not in self.state_keys:
+                continue
+            try:
+                cost_val = float(raw_cost)
+            except Exception:
+                continue
+            if cost_val <= 0:
+                continue
+            self._change_state(key, -cost_val)
+            _log.DEBUG(f"[Life][Event]扣除触发成本 trigger={trigger_id} state={key} cost={cost_val}")
 
     def tick_triggers(self) -> list[dict[str, Any]]:
         """检查执行中的触发器并完成到期的。返回本次 tick 完成的结果列表。"""
@@ -3188,6 +3292,7 @@ class LifeSystem:
                 completed.append(result)
         if completed:
             self._completed_trigger_results.extend(completed)
+            _log.DEBUG(f"[Life][Event]本 tick 完成触发器数量={len(completed)}")
         return completed
 
     def pop_completed_trigger_results(self) -> list[dict[str, Any]]:
@@ -3197,6 +3302,53 @@ class LifeSystem:
         payload = list(self._completed_trigger_results)
         self._completed_trigger_results.clear()
         return payload
+
+    def _append_recent_event_log(self, row: dict[str, Any]) -> None:
+        if not isinstance(row, dict):
+            return
+        self._recent_event_log_seq += 1
+        payload = dict(row)
+        payload["seq"] = int(self._recent_event_log_seq)
+        payload["ts"] = float(time.time())
+        self._recent_event_logs.append(payload)
+        self._recent_event_logs = self._recent_event_logs[-self._RECENT_EVENT_LOG_MAX:]
+
+    def _append_recent_result_logs(
+        self,
+        trigger_id: str,
+        trigger_name: str,
+        source: str,
+        result_log: list[dict[str, Any]],
+        add_none_when_empty: bool,
+    ) -> None:
+        if not result_log:
+            if add_none_when_empty:
+                self._append_recent_event_log(
+                    {
+                        "type": "result",
+                        "source": source,
+                        "trigger_id": trigger_id,
+                        "trigger_name": trigger_name,
+                        "entry": {"type": "none"},
+                    }
+                )
+            return
+
+        for entry in result_log:
+            if not isinstance(entry, dict):
+                continue
+            self._append_recent_event_log(
+                {
+                    "type": "result",
+                    "source": source,
+                    "trigger_id": trigger_id,
+                    "trigger_name": trigger_name,
+                    "entry": dict(entry),
+                }
+            )
+
+    def get_recent_event_logs(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._recent_event_logs]
 
     def _execute_event_guaranteed(self, record: dict[str, Any], result_log: list[dict[str, Any]]) -> None:
         guaranteed = record.get("guaranteed")
@@ -3209,12 +3361,16 @@ class LifeSystem:
             item_id = str(item_entry.get("id") or "").strip()
             count = max(1, int(item_entry.get("count", 1)))
             if item_id and self.add_item(item_id, count):
-                result_log.append({"type": "item", "id": item_id, "count": count})
+                item_record = self.item_registry.get(item_id, {})
+                item_name = self._resolve_record_name(item_record, item_id)
+                result_log.append({"type": "item", "id": item_id, "name": item_name, "count": count})
         # 必定给予 buff
         for buff_entry in guaranteed.get("buffs", []):
             buff_id = str(buff_entry).strip() if not isinstance(buff_entry, dict) else str(buff_entry.get("id") or "").strip()
             if buff_id and self.apply_buff(buff_id):
-                result_log.append({"type": "buff", "id": buff_id})
+                buff_record = self.buff_registry.get(buff_id, {})
+                buff_name = self._resolve_record_name(buff_record, buff_id)
+                result_log.append({"type": "buff", "id": buff_id, "name": buff_name})
         # 必定触发事件结果
         for outcome_entry in guaranteed.get("outcomes", []):
             outcome_id = str(outcome_entry).strip() if not isinstance(outcome_entry, dict) else str(outcome_entry.get("id") or "").strip()
@@ -3231,11 +3387,14 @@ class LifeSystem:
             entries = pool.get("entries")
             if not isinstance(entries, list) or not entries:
                 continue
-            self._roll_random_pool(entries, result_log, depth=0)
+            self._roll_random_pool(pool, result_log, depth=0)
 
-    def _roll_random_pool(self, entries: list[dict[str, Any]], result_log: list[dict[str, Any]], depth: int) -> None:
+    def _roll_random_pool(self, pool: dict[str, Any], result_log: list[dict[str, Any]], depth: int) -> None:
         if depth > 10:
             _log.WARN("[Life][Event]事件链深度超过10，中止")
+            return
+        entries = pool.get("entries")
+        if not isinstance(entries, list):
             return
         valid_entries = [e for e in entries if isinstance(e, dict)]
         if not valid_entries:
@@ -3244,13 +3403,15 @@ class LifeSystem:
         # 计算基础概率与属性加成后的有效概率
         base_chances = [float(e.get("chance", 0)) for e in valid_entries]
         base_total = sum(base_chances)
-        if base_total <= 0:
-            return
 
         effective_chances: list[float] = []
         for entry, base_chance in zip(valid_entries, base_chances):
             attr_bonus = entry.get("attr_bonus")
             bonus = 0.0
+            try:
+                bonus += float(entry.get("flat_bonus", 0.0))
+            except Exception:
+                pass
             if isinstance(attr_bonus, dict):
                 for attr_key, bonus_per_point in attr_bonus.items():
                     attr_val = self._effective_attr(str(attr_key))
@@ -3258,12 +3419,30 @@ class LifeSystem:
                         bonus += float(attr_val) * float(bonus_per_point)
                     except Exception:
                         pass
+            state_bonus = entry.get("state_bonus")
+            if isinstance(state_bonus, dict):
+                for state_key, bonus_per_point in state_bonus.items():
+                    s_key = str(state_key).strip()
+                    if s_key not in self.state_keys:
+                        continue
+                    state_val = float(self.profile.states.get(s_key, 0.0))
+                    try:
+                        bonus += state_val * float(bonus_per_point)
+                    except Exception:
+                        pass
             effective_chances.append(max(0.0, base_chance + bonus))
 
-        # 基础不触发概率固定，不受属性影响
-        base_no_fire = max(0.0, 100.0 - base_total)
+        # 基础不触发概率固定，不受属性影响。
+        # 当 base_total <= 0 时，允许通过 bonus 驱动概率（如 flat_bonus/state_bonus）。
+        if base_total > 0:
+            base_no_fire = max(0.0, 100.0 - base_total)
+        else:
+            base_no_fire = 0.0
         effective_total = sum(effective_chances) + base_no_fire
         if effective_total <= 0:
+            fallback = pool.get("fallback")
+            if isinstance(fallback, dict):
+                self._apply_pool_entry(fallback, result_log, depth)
             return
 
         # 归一化：超过100%时等比缩放，保证总概率不超过100%
@@ -3280,7 +3459,10 @@ class LifeSystem:
             if roll < cumulative:
                 self._apply_pool_entry(entry, result_log, depth)
                 break
-        # roll 落在不触发区间时不执行任何条目
+        else:
+            fallback = pool.get("fallback")
+            if isinstance(fallback, dict):
+                self._apply_pool_entry(fallback, result_log, depth)
 
     def _apply_pool_entry(self, entry: dict[str, Any], result_log: list[dict[str, Any]], depth: int) -> None:
         entry_type = str(entry.get("type") or "").strip().lower()
@@ -3291,10 +3473,14 @@ class LifeSystem:
         if entry_type == "item":
             count = max(1, int(entry.get("count", 1)))
             if self.add_item(entry_id, count):
-                result_log.append({"type": "item", "id": entry_id, "count": count})
+                item_record = self.item_registry.get(entry_id, {})
+                item_name = self._resolve_record_name(item_record, entry_id)
+                result_log.append({"type": "item", "id": entry_id, "name": item_name, "count": count})
         elif entry_type == "buff":
             if self.apply_buff(entry_id):
-                result_log.append({"type": "buff", "id": entry_id})
+                buff_record = self.buff_registry.get(entry_id, {})
+                buff_name = self._resolve_record_name(buff_record, entry_id)
+                result_log.append({"type": "buff", "id": entry_id, "name": buff_name})
         elif entry_type == "outcome":
             self._execute_outcome(entry_id, result_log, depth=depth)
 
@@ -3310,6 +3496,7 @@ class LifeSystem:
         outcome_name = self._resolve_record_name(outcome, outcome_id)
         outcome_desc = self._resolve_record_desc(outcome)
         result_log.append({"type": "outcome", "id": outcome_id, "name": outcome_name, "desc": outcome_desc})
+        _log.DEBUG(f"[Life][Event]应用 outcome id={outcome_id} depth={depth}")
 
         # 应用 outcome 的直接效果（即时状态变化 + attr_exp）
         effects = outcome.get("effects")
@@ -3333,6 +3520,22 @@ class LifeSystem:
             if levelups:
                 self._completed_trigger_results.extend(levelups)
 
+        # 顶层 permanent_attr_delta：永久属性修正，同时同步到当前属性值。
+        permanent_attr_delta = outcome.get("permanent_attr_delta")
+        if isinstance(permanent_attr_delta, dict):
+            for attr_key, raw_delta in permanent_attr_delta.items():
+                a_key = str(attr_key).strip()
+                if a_key not in self.attr_keys:
+                    continue
+                try:
+                    delta = float(raw_delta)
+                except Exception:
+                    continue
+                if delta == 0:
+                    continue
+                self.profile.permanent_attr_delta[a_key] = self.profile.permanent_attr_delta.get(a_key, 0.0) + delta
+                self.profile.attrs[a_key] = self.profile.attrs.get(a_key, 0.0) + delta
+
         self._execute_event_guaranteed(outcome, result_log)
 
         pools = outcome.get("random_pools")
@@ -3342,7 +3545,9 @@ class LifeSystem:
                     continue
                 entries = pool.get("entries")
                 if isinstance(entries, list) and entries:
-                    self._roll_random_pool(entries, result_log, depth=depth + 1)
+                    self._roll_random_pool(pool, result_log, depth=depth + 1)
+
+        self._clear_buffs_from_record(outcome)
 
     def get_tag_display_map(self) -> dict[str, dict[str, str]]:
         """返回标签 ID → {name, color} 映射，供 UI 渲染标签气泡。"""
@@ -3381,6 +3586,9 @@ class LifeSystem:
                 "can_fire": can,
                 "block_reason": reason,
                 "mutex": list(trigger.get("mutex", [])),
+                "mutex_by_tag": bool(trigger.get("mutex_by_tag", False)),
+                "tags_mode": str(trigger.get("tags_mode") or "normal"),
+                "costs": dict(trigger.get("costs") or {}),
                 "classes": list(trigger.get("_classes", [])),
                 "tags": list(trigger.get("tags") or []),
             })
@@ -3476,6 +3684,8 @@ class LifeSystem:
             "level": self.profile.level,
             "exp": self.profile.exp,
             "permanent_attr_delta": dict(self.profile.permanent_attr_delta),
+            "recent_event_logs": list(self._recent_event_logs),
+            "recent_event_log_seq": int(self._recent_event_log_seq),
         }
 
     def load_profile(self, data: dict[str, Any]) -> None:
@@ -3603,6 +3813,8 @@ class LifeSystem:
 
         self._trigger_executing.clear()
         self._completed_trigger_results.clear()
+        self._recent_event_logs.clear()
+        self._recent_event_log_seq = 0
         for trigger_id, remaining in data.get("trigger_executing", {}).items():
             try:
                 r = float(remaining)
@@ -3611,7 +3823,31 @@ class LifeSystem:
             if r > 0:
                 self._trigger_executing[str(trigger_id)] = now + r
 
+        raw_recent_logs = data.get("recent_event_logs", [])
+        if isinstance(raw_recent_logs, list):
+            sanitized: list[dict[str, Any]] = []
+            for row in raw_recent_logs:
+                if isinstance(row, dict):
+                    payload = dict(row)
+                    if "ts" not in payload:
+                        payload["ts"] = 0.0
+                    sanitized.append(payload)
+            self._recent_event_logs = sanitized[-self._RECENT_EVENT_LOG_MAX:]
+        try:
+            self._recent_event_log_seq = int(data.get("recent_event_log_seq", 0))
+        except Exception:
+            self._recent_event_log_seq = 0
+        if self._recent_event_log_seq <= 0 and self._recent_event_logs:
+            # 兼容旧存档：无 seq 字段时，按现有条目重建序号。
+            self._recent_event_log_seq = len(self._recent_event_logs)
+            for idx, row in enumerate(self._recent_event_logs, start=1):
+                row["seq"] = idx
+
         self._recompute_inventory_passive_attrs()
+        _log.INFO(
+            f"[Life]存档已载入 level={self.profile.level} exp={self.profile.exp:.2f} "
+            f"inventory={len(self.profile.inventory)} effects={len(self.profile.active_effects)} dead={self.is_dead}"
+        )
 
     def reset_profile(self) -> None:
         """清除所有当前养成数据，恢复到默认初始状态并保存存档。"""
@@ -3622,6 +3858,8 @@ class LifeSystem:
         self._trigger_cooldowns.clear()
         self._trigger_executing.clear()
         self._completed_trigger_results.clear()
+        self._recent_event_logs.clear()
+        self._recent_event_log_seq = 0
         self.is_dead = False
         self._death_summary = None
         self._life_started_at = time.time()
@@ -3631,13 +3869,19 @@ class LifeSystem:
         _log.INFO("[Life]养成数据已重置")
 
     def save(self, profile_id: str = "default") -> None:
+        _log.DEBUG(
+            f"[Life]准备保存存档 id={profile_id} level={self.profile.level} exp={self.profile.exp:.2f} "
+            f"effects={len(self.profile.active_effects)}"
+        )
         self.store.save_profile(profile_id, self.dump_profile())
 
     def load(self, profile_id: str = "default") -> bool:
         payload = self.store.load_profile(profile_id)
         if payload is None:
+            _log.INFO(f"[Life]未找到存档，跳过载入: {profile_id}")
             return False
         self.load_profile(payload)
+        _log.INFO(f"[Life]load(profile_id={profile_id}) 成功")
         return True
 
     _EXPORT_FORMAT_VERSION = 1
@@ -3660,7 +3904,7 @@ class LifeSystem:
             _log.INFO(f"[Life]存档已导出: {path}")
             return True, ""
         except Exception as exc:
-            _log.WARN(f"[Life]存档导出失败: {exc}")
+            _log.EXCEPTION("[Life]存档导出失败", exc)
             return False, str(exc)
 
     def import_profile(self, file_path: str | Path) -> tuple[bool, str]:
@@ -3690,5 +3934,5 @@ class LifeSystem:
             _log.WARN(f"[Life]存档导入失败（JSON 解析错误）: {exc}")
             return False, f"JSON 解析错误: {exc}"
         except Exception as exc:
-            _log.WARN(f"[Life]存档导入失败: {exc}")
+            _log.EXCEPTION("[Life]存档导入失败", exc)
             return False, str(exc)

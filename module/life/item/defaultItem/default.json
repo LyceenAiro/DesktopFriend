@@ -1,0 +1,38 @@
+[
+  {
+    "id": "temple_pass",
+    "name": "神殿探索证明",
+    "name_i18n_key": "life.item.temple_pass.name",
+    "desc": "进入神殿探险的凭证。",
+    "desc_i18n_key": "life.item.temple_pass.desc",
+    "usable": false,
+    "consumable": false,
+    "unique": true
+  },
+  {
+    "id": "vit_gem",
+    "name": "体质宝石",
+    "name_i18n_key": "life.item.vit_gem.name",
+    "desc": "持有时体质 +1。",
+    "desc_i18n_key": "life.item.vit_gem.desc",
+    "usable": false,
+    "consumable": false,
+    "unique": true,
+    "passive_attr_bonus": {
+      "vit": 1
+    }
+  },
+  {
+    "id": "str_gem",
+    "name": "力量宝石",
+    "name_i18n_key": "life.item.str_gem.name",
+    "desc": "持有时力量 +1。",
+    "desc_i18n_key": "life.item.str_gem.desc",
+    "usable": false,
+    "consumable": false,
+    "unique": true,
+    "passive_attr_bonus": {
+      "str": 1
+    }
+  }
+]

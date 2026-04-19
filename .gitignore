@@ -18,8 +18,6 @@ logo.ico
 logo.png
 
 # 调试文件
-module/life/*/*.json
-module/life/*/*/*.json
 tests
 LIFE*.MD
 pack_app.py

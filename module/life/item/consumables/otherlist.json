@@ -1,0 +1,27 @@
+[
+  {
+    "id": "NaCl",
+    "name": "氯化钠",
+    "name_i18n_key": "life.item.nacl.name",
+    "desc": "紧急提高身体电解质含量。",
+    "desc_i18n_key": "life.item.nacl.desc",
+    "usable": true,
+    "nutrition": {
+      "hydration": -200
+    },
+    "tags": ["first_aid"]
+  },
+  {
+    "id": "medicine",
+    "name": "药物",
+    "name_i18n_key": "life.item.medicine.name",
+    "desc": "用于治疗生病，味道很苦。",
+    "desc_i18n_key": "life.item.medicine.desc",
+    "usable": true,
+    "hp": 10,
+    "happy": -20,
+    "clear_buffs": ["ill"],
+    "tags": ["first_aid"]
+  }
+]
+

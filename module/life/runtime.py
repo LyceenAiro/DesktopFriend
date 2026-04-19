@@ -16,11 +16,16 @@ _mod_registry = None  # type: ignore
 def get_life_system() -> LifeSystem:
     global _life_system
     if _life_system is None:
+        _log.INFO("[Life]初始化 LifeSystem 单例")
         _life_system = LifeSystem()
         _life_system.character_name = get_resource_pack_display_name(get_resource_pack_name())
-        _life_system.load("default")
+        loaded = _life_system.load("default")
         life_cfg = load_config("life")
         _life_system.paused = not bool(life_cfg.get("life_enabled", True))
+        _log.INFO(
+            f"[Life]LifeSystem 已就绪 character={_life_system.character_name or '<unknown>'} "
+            f"loaded={loaded} paused={_life_system.paused}"
+        )
     return _life_system
 
 
@@ -59,6 +64,7 @@ def is_life_loop_active() -> bool:
 def set_life_enabled(enabled: bool) -> None:
     """启用或暂停养成系统（同步更新 LifeSystem.paused 与定时器状态）。"""
     life = get_life_system()
+    _log.INFO(f"[Life]请求切换养成系统 enabled={enabled}")
     life.paused = not enabled
     if enabled:
         if _life_timer is not None and not _life_timer.isActive():
@@ -76,6 +82,7 @@ def start_life_loop(parent=None, interval_ms: int = 1000) -> QTimer:
     life = get_life_system()
     if _life_timer is None:
         _life_timer = QTimer(parent)
+        _log.DEBUG("[Life]创建主 tick 定时器")
 
         def _on_tick():
             try:
@@ -86,7 +93,7 @@ def start_life_loop(parent=None, interval_ms: int = 1000) -> QTimer:
                 if not was_dead and life.is_dead:
                     _switch_to_revive_timer(parent)
             except Exception as exc:
-                _log.ERROR(f"[Life]tick失败: {exc}")
+                _log.EXCEPTION("[Life]tick失败", exc)
 
         _life_timer.timeout.connect(_on_tick)
 
@@ -113,6 +120,7 @@ def _switch_to_revive_timer(parent=None) -> None:
 
     if _life_revive_timer is None:
         _life_revive_timer = QTimer(parent)
+        _log.DEBUG("[Life]创建轻量复活检测计时器")
 
         def _check_revive():
             life = get_life_system()
@@ -127,6 +135,7 @@ def _switch_to_revive_timer(parent=None) -> None:
 
     if not _life_revive_timer.isActive():
         _life_revive_timer.start(5000)
+        _log.INFO("[Life]轻量复活检测计时器已启动: 5000ms")
 
 
 # --------------------------------------------------------------------------- #
@@ -144,6 +153,7 @@ def configure_tick_intervals(normal_ms: int, afk_ms: int) -> None:
     global _normal_tick_interval_ms, _afk_tick_interval_ms
     _normal_tick_interval_ms = max(100, int(normal_ms))
     _afk_tick_interval_ms = max(100, int(afk_ms))
+    _log.INFO(f"[Life]tick 间隔配置 normal={_normal_tick_interval_ms}ms afk={_afk_tick_interval_ms}ms")
     # 重新应用当前实际间隔
     _apply_current_interval()
 
@@ -164,11 +174,13 @@ def _apply_current_interval() -> None:
 def enter_hibernation(reason: str) -> None:
     """进入休眠状态（reason: 'hidden' 或 'afk'）。"""
     _hibernation_reason.add(reason)
+    _log.DEBUG(f"[Life]进入休眠 reason={reason} active={sorted(_hibernation_reason)}")
     _apply_current_interval()
 
 
 def leave_hibernation(reason: str) -> None:
     """离开休眠状态（reason: 'hidden' 或 'afk'）。"""
     _hibernation_reason.discard(reason)
+    _log.DEBUG(f"[Life]离开休眠 reason={reason} active={sorted(_hibernation_reason)}")
     _apply_current_interval()
 
