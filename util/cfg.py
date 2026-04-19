@@ -12,6 +12,7 @@ CONFIG_FILES = {
     "smart": CONFIG_DIR / "smart.cfg",
     "debug": CONFIG_DIR / "debug.cfg",
     "life": CONFIG_DIR / "life.cfg",
+    "mods": CONFIG_DIR / "mods.cfg",
 }
 
 # 默认配置值
@@ -46,6 +47,10 @@ DEFAULT_CONFIGS = {
     },
     "life": {
         "life_enabled": False,
+    },
+    "mods": {
+        "disabled_mods": [],
+        "mod_order": [],
     },
 }
 

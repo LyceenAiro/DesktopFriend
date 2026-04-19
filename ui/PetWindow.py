@@ -8,11 +8,13 @@ from PySide6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication(sys.argv)
 
 from ui.PetArt import *
+from ui.BuffStatusBar import BuffStatusBar
 from resources.image_resources import get_resource_pack_name
 
 from util.log import _log
 from util.version import version
 from util.cfg import init_config_dir, load_config
+from typing import Optional, List, Dict, Any
 
 # 所有Event类型请通过注册表注册使用
 
@@ -33,7 +35,9 @@ class DesktopPet(QWidget):
         if basic_config.get("stay_top", True):
             self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(128, 128)
+        
+        # 宠物 128px + 4px 间隔 + 32px 图标列 = 164px
+        self.setFixedSize(164, 128)
 
         self.mouse_press_position = None
         self.is_follow_mouse = False
@@ -56,6 +60,11 @@ class DesktopPet(QWidget):
         self.PetArt = QLabel(self)
         self.PetArt.setPixmap(PetArtList[DEFAULT])
         self.PetArt.move(0, 0)
+        
+        # Buff 状态栏初始化（竖向三槽，紧贴宠物右边缘 128px 处）
+        self.buff_status_bar = BuffStatusBar(self)
+        self.buff_status_bar.move(128, 12)
+        self.buff_status_bar.raise_()  # 确保在最上层
 
         # 最大x坐标
         self.screen_max_x = self.ScreenMaxX()
@@ -130,6 +139,39 @@ class DesktopPet(QWidget):
     
     # 定时器注册
     def RegisterTimeout(self, callback): self.Picktimer.timeout.connect(callback)
+    
+    # ═══════════════════════════════════════
+    # Buff 状态栏相关方法
+    # ═══════════════════════════════════════
+    
+    def set_status_buffs(self, buffs: List[Dict[str, Any]]):
+        """
+        设置要显示在状态栏的 buff 列表
+        
+        Args:
+            buffs: buff 数据字典列表（最多三个会被显示）
+        """
+        self.buff_status_bar.set_buffs(buffs)
+    
+    def clear_status_buffs(self):
+        """清除所有状态栏 buff 显示"""
+        self.buff_status_bar.clear_buffs()
+    
+    def update_status_buff_at(self, index: int, buff_data: Optional[Dict[str, Any]]):
+        """
+        更新特定位置的状态栏 buff
+        
+        Args:
+            index: buff 位置（0-2）
+            buff_data: buff 数据字典，或 None 清除
+        """
+        self.buff_status_bar.update_buff_at(index, buff_data)
+    
+    def get_displayed_status_buffs(self) -> List[Optional[Dict[str, Any]]]:
+        """获取当前显示的状态栏 buff 列表"""
+        return self.buff_status_bar.get_displayed_buffs()
+
+    # 定时器注册
 
     # 菜单界面和功能注册
     def RegisterMenu(self, callback): self.menu_init = callback

@@ -9,7 +9,8 @@ install.bat
 
 # 资源包不开源
 *.aseprite
-/resources/PetArt*
+/resources/PetArt
+/resources/Buff
 /resources/*.json
 mod
 
@@ -18,11 +19,12 @@ logo.ico
 logo.png
 
 # 调试文件
+png_to_json.py
+DevWord
 tests
 LIFE*.MD
 pack_app.py
 /log
-/module/LIFE/LIFE_DEV_0_3.md
 /config
 /data
 /test.py

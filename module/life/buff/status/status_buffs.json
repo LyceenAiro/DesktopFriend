@@ -5,6 +5,8 @@
     "name_i18n_key": "life.buff.ill.name",
     "desc": "身体不适，持续损耗状态。",
     "desc_i18n_key": "life.buff.ill.desc",
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAB+ElEQVRYhe1XMW7DMAykCytAH2AvfUQz+wt9Q4aMfVHHDHlDv5A5fYSX+AEGIgPq4JxNU6JsqUuBlkAAWZZ4Jx5JOUR/3YqcTcfz3oXmT4drsr8yhwAR0fPL8rlv8/xkRYAeUQCJvs07vUrg7f01uqluCkePKNi7paEzRER0u7goic+PL28uKgGAbhdXYAzgvh3B+Rxfw/fEiKkE6qZwZWUfY+Ok5iMJM41J5IXcr5F4igSAiIiGzngJx0nE3kGamKkEbhdXxMC3GEjEJFAJ1E2xCHvfzj/NQmtkbkjb1Af6dhlq+aytKStLZheXYTUHNOMVkPJOJXA87x1arAw/tzUJQuBlZScZOA7xRoTOJvULAaO8kOW8I8o1Zmc8n7xzejmgaQ2HMF4h0Luslr4AHqukBQE/fHMCyWQaAs60hIv59SLAm4cmARoQ5hCdkHxlZRc+ZSQXVTB0ZtImJIXUegy7nw/yrsCa0+FayO44RYBfp7hIQtrhRHCOsA+M9PhuBuLdUF7bSX1gS32n9ADa2glnvcdTSR0xN96O+pokAlIGfHxI43Mh0B9dRuOp5rm1vh4C510wiQAMJOzdehEYOqPe+QBfs9XvAYQQYwACgNc5XyP3qweMseMb+bhujCNRgiGgtY9U+rWf5SngsFwS2f+Mcv8J/Zu0bz2GSFpQizexAAAAAElFTkSuQmCC",
     "hps": -0.5,
     "happys": -0.5,
     "energy_max": "-40%",

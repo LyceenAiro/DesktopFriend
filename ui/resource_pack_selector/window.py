@@ -102,25 +102,44 @@ class ResourcePackSelector(QDialog):
         right_panel.setObjectName("rightPanel")
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(26, 28, 26, 24)
-        right_layout.setSpacing(14)
+        right_layout.setSpacing(12)
 
         title_label = QLabel(tr("resource_selector.title"))
         title_label.setObjectName("title")
         right_layout.addWidget(title_label)
 
+        # ── 标签切换栏 ──────────────────────────────────────────────────
+        tab_row = QHBoxLayout()
+        tab_row.setContentsMargins(0, 0, 0, 0)
+        tab_row.setSpacing(6)
+        self.tab_resource_btn = QPushButton(tr("resource_selector.tab.resource_pack"))
+        self.tab_resource_btn.clicked.connect(lambda: self._switch_tab(0))
+        self.tab_mod_btn = QPushButton(tr("resource_selector.tab.mod_manager"))
+        self.tab_mod_btn.clicked.connect(lambda: self._switch_tab(1))
+        tab_row.addWidget(self.tab_resource_btn)
+        tab_row.addWidget(self.tab_mod_btn)
+        tab_row.addStretch()
+        right_layout.addLayout(tab_row)
+
+        # ── 资源包选择页 ────────────────────────────────────────────────
+        self.resource_pack_page = QFrame()
+        rp_layout = QVBoxLayout(self.resource_pack_page)
+        rp_layout.setContentsMargins(0, 0, 0, 0)
+        rp_layout.setSpacing(12)
+
         self.info_label = QLabel("")
         self.info_label.setObjectName("info")
-        right_layout.addWidget(self.info_label)
+        rp_layout.addWidget(self.info_label)
 
         self.preview_label = QLabel(tr("resource_selector.preview.none"))
         self.preview_label.setObjectName("previewBox")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setMinimumHeight(156)
-        right_layout.addWidget(self.preview_label)
+        rp_layout.addWidget(self.preview_label)
 
         self.pack_list = QListWidget()
         self.pack_list.setObjectName("packList")
-        self.pack_list.setMinimumHeight(260)
+        self.pack_list.setMinimumHeight(160)
         self.pack_list.setAcceptDrops(True)
         self.pack_list.itemSelectionChanged.connect(self._on_pack_selected)
         self.pack_list.itemDoubleClicked.connect(self._on_item_double_clicked)
@@ -132,7 +151,7 @@ class ResourcePackSelector(QDialog):
         list_container_layout.setSpacing(0)
         list_container_layout.addWidget(self.pack_list, 1)
 
-        right_layout.addWidget(self.list_container, 1)
+        rp_layout.addWidget(self.list_container, 1)
 
         footer_row = QHBoxLayout()
         footer_row.setSpacing(10)
@@ -153,7 +172,20 @@ class ResourcePackSelector(QDialog):
         self.start_button.clicked.connect(self._accept_selection)
         footer_row.addWidget(self.start_button)
 
-        right_layout.addLayout(footer_row)
+        rp_layout.addLayout(footer_row)
+
+        right_layout.addWidget(self.resource_pack_page, 1)
+
+        # ── Mod 管理页 ──────────────────────────────────────────────────
+        from ui.resource_pack_selector.mod_tab import ModManagerTab
+        self.mod_manager_page = ModManagerTab()
+        self.mod_manager_page.setVisible(False)
+        self.mod_manager_page.exit_requested.connect(self.reject)
+        self.mod_manager_page.start_requested.connect(self._accept_selection)
+        right_layout.addWidget(self.mod_manager_page, 1)
+
+        # 初始化标签样式
+        self._switch_tab(0)
 
         shell_layout.addWidget(left_panel, 10)
         shell_layout.addWidget(right_panel, 14)
@@ -165,13 +197,38 @@ class ResourcePackSelector(QDialog):
             desc_label,
             hint_label,
             title_label,
-            self.info_label,
         ]
         for widget in self._drag_widgets:
             widget.setMouseTracking(True)
             widget.installEventFilter(self)
 
         self.setStyleSheet(RESOURCE_PACK_SELECTOR_STYLE)
+
+    # ── 标签切换 ──────────────────────────────────────────────────────────
+
+    _TAB_ACTIVE_STYLE = (
+        "QPushButton { background-color: #0078d4; color: #ffffff; "
+        "border: none; border-radius: 6px; padding: 4px 14px; "
+        "font-size: 12px; font-weight: 600; }"
+        "QPushButton:hover { background-color: #1a86d9; }"
+    )
+    _TAB_INACTIVE_STYLE = (
+        "QPushButton { background-color: #2d2d2d; color: #cccccc; "
+        "border: 1px solid #3a3a3a; border-radius: 6px; padding: 4px 14px; "
+        "font-size: 12px; }"
+        "QPushButton:hover { background-color: #383838; }"
+    )
+
+    def _switch_tab(self, index: int) -> None:
+        is_resource = (index == 0)
+        self.resource_pack_page.setVisible(is_resource)
+        self.mod_manager_page.setVisible(not is_resource)
+        self.tab_resource_btn.setStyleSheet(
+            self._TAB_ACTIVE_STYLE if is_resource else self._TAB_INACTIVE_STYLE
+        )
+        self.tab_mod_btn.setStyleSheet(
+            self._TAB_ACTIVE_STYLE if not is_resource else self._TAB_INACTIVE_STYLE
+        )
 
     def _load_resource_pack_items(self):
         pack_items = []

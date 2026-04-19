@@ -160,6 +160,42 @@ QPushButton {
     color: #888888;
     background-color: #1e1e1e;
 }
+#modName {
+    color: #f0f0f0;
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+}
+#modVersion {
+    color: #888888;
+    font-size: 11px;
+    background: transparent;
+}
+#modWarn {
+    color: #e09030;
+    font-size: 12px;
+    background: transparent;
+}
+#modId {
+    color: #7a7a7a;
+    font-size: 11px;
+    background: transparent;
+}
+#modDesc {
+    color: #c8c8c8;
+    font-size: 12px;
+    background: transparent;
+}
+#modAuthor {
+    color: #7a9aaa;
+    font-size: 11px;
+    background: transparent;
+}
+#modNotice {
+    color: #888888;
+    font-size: 11px;
+    background: transparent;
+}
 """
 
 LIST_CONTAINER_DRAG_STYLE = "#listContainer { background-color: #1a2620; border: 1px solid #5aaa88; border-radius: 8px; }"

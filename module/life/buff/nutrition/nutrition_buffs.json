@@ -25,6 +25,8 @@
     "id": "starving",
     "name": "严重饥饿",
     "desc": "非常的饿，感觉一点力气也没有。",
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABA0lEQVRYhe2VQQqCQBSG/7KDBOIyME/QIVwJncJrjKcQXHUCD2GBSwk6hTt5LUJR03zz1KTwhwFhZvg+fW9GYM2aNf+Si+PQxXFId99uKvjBOr6eAXKTZMPdy17IgZdJsyu4EqMEuuC6Ets54ABgWjY4PSESGILn4PeitsDQZy/h9+w2bwm64KZla8HFAml2nQQuEnh4XkMiB4nhIgEAOMVxQ0IKh+49oJQi3/cRBAEAYB9F1ZybJJvQMN7a/1wUoy+7Ck5EpJTqPWOhYRAB1egSEoE58FkFOHCpAOtvWNb8E3hobrJe6IPU37w9JimFVOIr8D6Jr8LbEovA6xKLwdf8XJ7szM/bmt67RgAAAABJRU5ErkJggg==",
     "hps": -2,
     "happys": -2,
     "energy_max": "-30%"
@@ -55,6 +57,8 @@
     "id": "dehydrated",
     "name": "严重缺水",
     "desc": "非常口渴，嗓子完全干掉了。",
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAxUlEQVRYhWNgGAWjYBSMAgpAdN7D/5SawUSJ5Ry6chQ7gmwHUAswkqMJ5nsY+HH5EcPSSfJkmTX0QgDd9zBAbigMrRDA5XsYICcUBjwEBtwBLNQ0zGOqEoMHMzNKwRT79y/eKCEpBJZOkmf8cfkRVjmYeMzfv3BMDCA5BJZOkmfEVvwunSTPiO57uoPFzMz//zMwwPFiIhxElTSAzyKYHKG0QLEDkH2OjokJCZo5gi6W43IEXS1Hd8SAWI7siAGzfBQMOQAAlv50IaviopcAAAAASUVORK5CYII=",
     "hps": -2,
     "happys": -2,
     "psc_max": "-20%",

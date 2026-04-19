@@ -7,6 +7,8 @@ from resources.image_resources import get_resource_pack_display_name, get_resour
 from util.cfg import load_config
 from util.log import _log
 
+_last_status_bar_buff_ids: list[str] = []
+
 _life_system: LifeSystem | None = None
 _life_timer: QTimer | None = None
 _life_revive_timer: QTimer | None = None  # 桌宠死亡后的轻量检测计时器
@@ -89,6 +91,7 @@ def start_life_loop(parent=None, interval_ms: int = 1000) -> QTimer:
                 was_dead = life.is_dead
                 life.tick()
                 life.save("default")
+                _update_buff_status_bar(life)
                 # 如果此 tick 导致死亡，切换到轻量复活检测计时器
                 if not was_dead and life.is_dead:
                     _switch_to_revive_timer(parent)
@@ -183,4 +186,27 @@ def leave_hibernation(reason: str) -> None:
     _hibernation_reason.discard(reason)
     _log.DEBUG(f"[Life]离开休眠 reason={reason} active={sorted(_hibernation_reason)}")
     _apply_current_interval()
+
+
+def _update_buff_status_bar(life: LifeSystem) -> None:
+    """根据当前活跃 effect 更新 PetWindow 的 buff 状态栏。"""
+    global _last_status_bar_buff_ids
+    try:
+        active_ids = life.list_active_effect_ids()
+        # 只在 buff 列表变化时才更新 UI
+        if active_ids == _last_status_bar_buff_ids:
+            return
+        _last_status_bar_buff_ids = active_ids
+
+        # 收集所有标记了 display_in_status_bar 的活跃 buff 数据
+        display_buffs = []
+        for buff_id in active_ids:
+            record = life.buff_registry.get(buff_id)
+            if record and record.get("display_in_status_bar"):
+                display_buffs.append(record)
+
+        from ui.PetWindow import PetWindow
+        PetWindow.set_status_buffs(display_buffs)
+    except Exception as exc:
+        _log.WARN(f"[Life]更新 buff 状态栏失败: {exc}")
 
