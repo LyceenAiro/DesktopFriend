@@ -365,6 +365,11 @@ class ResourcePackSelector(QDialog):
         self.start_button.setEnabled(True)
         self._update_preview(self.selected_pack)
 
+    def done(self, result: int) -> None:
+        self.refresh_timer.stop()
+        self.mod_manager_page.stop_timers()
+        super().done(result)
+
     def _accept_selection(self):
         if not self.selected_pack:
             return

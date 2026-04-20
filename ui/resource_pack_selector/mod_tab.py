@@ -7,7 +7,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QTimer, Signal
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QPoint
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -149,6 +150,20 @@ class ModDetailDialog(QDialog):
             }
             QLabel { background: transparent; }
         """)
+        self._drag_pos: QPoint | None = None
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_pos = None
 
 
 class ModListItem(QWidget):
@@ -165,7 +180,8 @@ class ModListItem(QWidget):
         self.mod_id = mod_id
         self._pack_info = pack_info
         self._issues = issues
-        self.setStyleSheet("background: transparent;")
+        # 不在此处设置 stylesheet，避免打断父级样式表继承（会导致子 widget 样式失效）
+        # 黄色背景通过 paintEvent 直接绘制
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
@@ -196,12 +212,6 @@ class ModListItem(QWidget):
             ver_lbl.setObjectName("modVersion")
             top_row.addWidget(ver_lbl)
 
-        if issues:
-            warn_lbl = QLabel("⚠")
-            warn_lbl.setObjectName("modWarn")
-            warn_lbl.setToolTip("\n".join(issues))
-            top_row.addWidget(warn_lbl)
-
         top_row.addStretch()
         info_col.addLayout(top_row)
 
@@ -219,6 +229,16 @@ class ModListItem(QWidget):
         detail_btn.setCursor(Qt.PointingHandCursor)
         detail_btn.clicked.connect(self._show_detail)
         layout.addWidget(detail_btn, 0, Qt.AlignVCenter)
+
+    def paintEvent(self, event) -> None:
+        if self._issues:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(180, 130, 0, 46))
+            painter.drawRoundedRect(self.rect(), 5, 5)
+            painter.end()
+        super().paintEvent(event)
 
     def _show_detail(self) -> None:
         dlg = ModDetailDialog(self.mod_id, self._pack_info, self._issues, self.window())
@@ -385,6 +405,10 @@ class ModManagerTab(QWidget):
             self.mod_list.setItemWidget(item, widget)
 
     # ── 拖拽回调 ─────────────────────────────────────────────────────────
+
+    def stop_timers(self) -> None:
+        """停止所有后台定时器（对话框关闭时调用）。"""
+        self._hot_timer.stop()
 
     def _on_rows_moved(
         self, src_parent, src_start, src_end, dst_parent, dst_row

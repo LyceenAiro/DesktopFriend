@@ -211,61 +211,123 @@ class LifeModRegistry:
 
         return issues
 
+    def _read_user_order(self) -> list[str]:
+        """读取 load_order.json 中用户自定义的 mod 顺序。"""
+        order_file = self.mod_root / "load_order.json"
+        try:
+            if order_file.exists():
+                data = json.loads(order_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    raw = data.get("order", [])
+                    if isinstance(raw, list):
+                        return [str(x).strip() for x in raw if str(x).strip()]
+        except Exception:
+            pass
+        return []
+
     def resolve_load_order(self) -> tuple[list[str], dict[str, list[str]]]:
         """Return deterministic mod load order and issues.
 
-        - If validation issues exist, order is empty and issues are returned.
-        - If dependency cycle exists, cycle issues are returned and order is empty.
+        Mods with validation issues (missing dependency, protocol mismatch, etc.)
+        are skipped individually and logged. Mods that transitively depend on a
+        skipped mod are also skipped. The remaining valid mods are returned in
+        topological order so the caller can proceed with a partial load.
+
+        Returns:
+            (order, issues) where order contains only loadable mods and issues
+            is informational (skipped mods and their reasons).
         """
 
         issues = self.validate()
-        if issues:
+        info_map, _, _, _ = self._collect_mods()
+
+        # Collect all mod ids that must be skipped, propagating transitively.
+        skip_set: set[str] = set(issues.keys())
+        changed = True
+        while changed:
+            changed = False
+            for mod_id, pack in info_map.items():
+                if mod_id in skip_set:
+                    continue
+                requires = {str(dep).strip() for dep in pack.get("requires", []) if str(dep).strip()}
+                blocked_by = requires & skip_set
+                if blocked_by:
+                    reason = f"跳过加载: 前置 mod 不可用: {', '.join(sorted(blocked_by))}"
+                    issues.setdefault(mod_id, []).append(reason)
+                    skip_set.add(mod_id)
+                    changed = True
+
+        # Log every skipped mod.
+        for mod_id in skip_set:
+            for reason in issues.get(mod_id, ["未知原因"]):
+                _log.WARN(f"[Mod]跳过 {mod_id}: {reason}")
+
+        valid_info = {mod_id: pack for mod_id, pack in info_map.items() if mod_id not in skip_set}
+
+        if not valid_info:
             return [], issues
 
-        info_map, _, _, _ = self._collect_mods()
-        requires_map: dict[str, set[str]] = {}
-        dependents_map: dict[str, set[str]] = {mod_id: set() for mod_id in info_map}
+        # 读取用户自定义顺序，用于同层节点的 tie-breaking
+        user_order = self._read_user_order()
+        _max_pos = len(user_order)
 
-        for mod_id, pack in info_map.items():
+        def _sort_key(mod_id: str) -> tuple[int, str]:
+            try:
+                pos = user_order.index(mod_id)
+            except ValueError:
+                pos = _max_pos  # 未在 load_order.json 中列出的排到最后
+            return (pos, mod_id)
+
+        requires_map: dict[str, set[str]] = {}
+        dependents_map: dict[str, set[str]] = {mod_id: set() for mod_id in valid_info}
+
+        for mod_id, pack in valid_info.items():
             requires = pack.get("requires", [])
-            requires_set = {str(dep).strip() for dep in requires if str(dep).strip()}
+            requires_set = {str(dep).strip() for dep in requires if str(dep).strip() and str(dep).strip() in valid_info}
             requires_map[mod_id] = requires_set
             for dep in requires_set:
                 if dep in dependents_map:
                     dependents_map[dep].add(mod_id)
 
         in_degree: dict[str, int] = {mod_id: len(reqs) for mod_id, reqs in requires_map.items()}
-        queue = sorted([mod_id for mod_id, deg in in_degree.items() if deg == 0])
+        queue = sorted([mod_id for mod_id, deg in in_degree.items() if deg == 0], key=_sort_key)
         order: list[str] = []
 
         while queue:
             current = queue.pop(0)
             order.append(current)
-            for dep_mod in sorted(dependents_map.get(current, set())):
+            for dep_mod in sorted(dependents_map.get(current, set()), key=_sort_key):
                 in_degree[dep_mod] -= 1
                 if in_degree[dep_mod] == 0:
                     queue.append(dep_mod)
-            queue.sort()
+            queue.sort(key=_sort_key)
 
-        if len(order) != len(info_map):
+        if len(order) != len(valid_info):
             cycle_nodes = sorted([mod_id for mod_id, deg in in_degree.items() if deg > 0])
-            cycle_issues = {mod_id: ["检测到依赖环，无法生成加载顺序"] for mod_id in cycle_nodes}
-            return [], cycle_issues
+            for mod_id in cycle_nodes:
+                reason = "检测到依赖环，无法加载"
+                issues.setdefault(mod_id, []).append(reason)
+                _log.WARN(f"[Mod]跳过 {mod_id}: {reason}")
+            order = [mod_id for mod_id in order if mod_id not in set(cycle_nodes)]
 
-        return order, {}
+        if order:
+            _log.INFO(f"[Mod]计划加载 {len(order)} 个 mod: {order}")
+
+        return order, issues
 
     def build_load_plan(self) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, list[str]]]:
-        """Build a deterministic load plan as (mod_id, pack_info) tuples."""
-        order, issues = self.resolve_load_order()
-        if issues:
-            return [], issues
+        """Build a deterministic load plan as (mod_id, pack_info) tuples.
 
+        Issues only contain skipped mods and are informational; a non-empty
+        issues dict does NOT mean the plan itself failed.
+        """
+        order, issues = self.resolve_load_order()
         info_map, _, _, _ = self._collect_mods()
         plan = [(mod_id, info_map[mod_id]) for mod_id in order if mod_id in info_map]
-        return plan, {}
+        return plan, issues
 
     def get_loaded_mod_ids(self) -> list[str]:
-        return sorted(self._loaded_mods.keys())
+        return list(self._loaded_mods.keys())
 
     def get_event_log(self) -> list[dict[str, str]]:
         return list(self._event_log)
@@ -525,11 +587,16 @@ class LifeModRegistry:
         """
 
         plan, issues = self.build_load_plan()
-        if issues:
-            return {"ok": False, "loaded": [], "rolled_back": [], "issues": issues}
+        # issues only contains skipped-mod info; an empty plan with no mods at all is still ok.
+        if not plan:
+            if issues:
+                _log.WARN(f"[Mod]没有可加载的 mod（{len(issues)} 个 mod 已跳过）")
+            return {"ok": True, "loaded": [], "rolled_back": [], "issues": issues}
 
+        # result_issues starts with skipped-mod info from build_load_plan so it is
+        # always included in the final result regardless of load outcome.
         loaded: list[tuple[str, dict[str, Any]]] = []
-        result_issues: dict[str, list[str]] = {}
+        result_issues: dict[str, list[str]] = dict(issues)
 
         for mod_id, pack in plan:
             try:
@@ -569,5 +636,5 @@ class LifeModRegistry:
             "ok": True,
             "loaded": [mod for mod, _ in loaded],
             "rolled_back": [],
-            "issues": {},
+            "issues": result_issues,
         }

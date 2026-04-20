@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ui.setting.tabs import AboutTab, BasicSettingsTab, DebugTab, LifeManagementTab, SmartConfigTab
+from ui.setting.tabs import AboutTab, BasicSettingsTab, DebugTab, LifeManagementTab, ModInfoTab, SmartConfigTab
 from ui.setting.toast import AnimatedStatusToast
 from ui.life_window.common import create_pin_icon
 from ui.styles.css import (
@@ -202,6 +202,18 @@ class UnifiedSettingsWindow(QDialog):
         }
 
         tab_order = [BasicSettingsTab.tab_name, SmartConfigTab.tab_name, LifeManagementTab.tab_name, AboutTab.tab_name]
+
+        # 若有已加载的 mod，则插入 Mod 信息标签页（位于"关于"之前）
+        try:
+            from module.life.runtime import get_mod_registry
+            _reg = get_mod_registry()
+            if _reg is not None and _reg.get_loaded_mod_ids():
+                mod_tab = ModInfoTab()
+                self.tab_widgets[ModInfoTab.tab_name] = mod_tab
+                tab_order.insert(tab_order.index(AboutTab.tab_name), ModInfoTab.tab_name)
+        except Exception as _e:
+            _log.WARN(f"[Settings]注册 Mod 标签页失败: {_e}")
+
         if self.developer_mode:
             self.tab_widgets[DebugTab.tab_name] = DebugTab(
                 throw_error_callback=self._throw_test_error,
