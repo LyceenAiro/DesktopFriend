@@ -132,8 +132,11 @@ class LifeModRegistry:
 
         return info_map, source_map, path_map, issues
 
-    def validate(self) -> dict[str, list[str]]:
-        info_map, _, _, issues = self._collect_mods()
+    def validate(self, _pre_collected=None) -> dict[str, list[str]]:
+        if _pre_collected is not None:
+            info_map, _, _, issues = _pre_collected
+        else:
+            info_map, _, _, issues = self._collect_mods()
         ids = set(info_map.keys())
         protocol_version = _parse_version_tuple(self.protocol_version)
 

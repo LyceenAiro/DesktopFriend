@@ -267,6 +267,19 @@ class LifeDebugWindow(QDialog):
 
         card_layout.addLayout(row)
         layout.addWidget(card)
+
+        collection_card = create_section_card(tr("life.debug.card.collection.title"), tr("life.debug.card.collection.desc"))
+        collection_layout = collection_card.layout()
+        collection_row = QHBoxLayout()
+        collection_row.setSpacing(8)
+
+        unlock_btn = QPushButton(tr("life.debug.unlock_all_collections"))
+        unlock_btn.clicked.connect(self._unlock_all_collections)
+        collection_row.addWidget(unlock_btn)
+        collection_row.addStretch()
+        collection_layout.addLayout(collection_row)
+        layout.addWidget(collection_card)
+
         layout.addStretch()
         return root
 
@@ -625,6 +638,11 @@ class LifeDebugWindow(QDialog):
 
     def _tick_once(self):
         self.life.tick()
+        self.refresh_view()
+
+    def _unlock_all_collections(self):
+        self.life.unlock_all_collections()
+        self._set_feedback(tr("life.debug.unlock_all_collections.done"), "success")
         self.refresh_view()
 
     def _apply_selected_buff(self):

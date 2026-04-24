@@ -276,7 +276,10 @@ class LifeInventoryTab(QFrame):
         row_layout.setContentsMargins(12, 10, 12, 10)
         row_layout.setSpacing(10)
 
-        text_block = QVBoxLayout()
+        text_container = QFrame()
+        text_container.setStyleSheet("QFrame { background: transparent; border: none; }")
+        text_block = QVBoxLayout(text_container)
+        text_block.setContentsMargins(0, 0, 0, 0)
         text_block.setSpacing(3)
 
         title_row = QHBoxLayout()
@@ -307,14 +310,11 @@ class LifeInventoryTab(QFrame):
         details: list[str] = []
         if self._developer_mode:
             details.append(f"ID: {item.get('id', '')}")
-        if not bool(item.get("usable", True)):
-            details.append(tr("life.inventory.not_usable"))
-
-        # 被动属性加成预览
-        passive_bonus: dict = item.get("passive_attr_bonus") or {}
-        if passive_bonus:
-            bonus_parts = [f"{k} {v:+g}" for k, v in sorted(passive_bonus.items())]
-            details.append(tr("life.inventory.passive_bonus") + " " + "  ".join(bonus_parts))
+            # 被动属性加成预览（仅开发者模式）
+            passive_bonus: dict = item.get("passive_attr_bonus") or {}
+            if passive_bonus:
+                bonus_parts = [f"{k} {v:+g}" for k, v in sorted(passive_bonus.items())]
+                details.append(tr("life.inventory.passive_bonus") + " " + "  ".join(bonus_parts))
 
         cooldown_remaining = float(item.get("cooldown_remaining", 0))
         on_cooldown = bool(item.get("on_cooldown", False)) or cooldown_remaining > 0
@@ -325,7 +325,7 @@ class LifeInventoryTab(QFrame):
             subtitle.setStyleSheet("background: transparent; border: none;")
             text_block.addWidget(subtitle)
 
-        row_layout.addLayout(text_block, 1)
+        row_layout.addWidget(text_container, 1, Qt.AlignVCenter)
 
         info_btn = QPushButton(tr("life.inventory.info"))
         info_btn.setFixedWidth(72)

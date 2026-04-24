@@ -424,7 +424,7 @@ class LifeAttrsTab(QFrame):
 
     def update_data(self, snapshot):
         new_ids = [str(e.get("id", "")) for e in snapshot if e.get("id")]
-        if new_ids != self._current_attr_ids:
+        if new_ids != self._current_attr_ids or not new_ids:
             self._rebuild_list(snapshot)
 
         for entry in snapshot:

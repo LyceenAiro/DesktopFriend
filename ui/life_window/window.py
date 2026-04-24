@@ -8,13 +8,15 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 
 from module.life.runtime import get_life_system
 from ui.life_window.common import attach_window_shadow, create_pin_icon, style_window_controls
 from ui.setting.toast import AnimatedStatusToast
-from ui.life_window.tabs import LifeAttrsTab, LifeEffectsTab, LifeEventsTab, LifeInventoryTab, LifeNutritionTab, LifeStatesTab
+from ui.life_window.tabs import LifeAttrsTab, LifeCollectionTab, LifeEffectsTab, LifeEventsTab, LifeInventoryTab, LifeNutritionTab, LifeStatesTab
 from ui.styles.css import (
     BOTTOM_BAR_STYLE,
     DIVIDER_STYLE,
@@ -147,9 +149,31 @@ class LifeWindow(QDialog):
         self.nav_frame = QFrame()
         self.nav_frame.setStyleSheet(NAV_FRAME_STYLE)
         self.nav_frame.setFixedWidth(180)
-        self.nav_layout = QVBoxLayout(self.nav_frame)
-        self.nav_layout.setContentsMargins(12, 12, 12, 12)
-        self.nav_layout.setSpacing(8)
+
+        nav_outer = QVBoxLayout(self.nav_frame)
+        nav_outer.setContentsMargins(0, 0, 0, 0)
+        nav_outer.setSpacing(0)
+
+        self.nav_scroll = QScrollArea(self.nav_frame)
+        self.nav_scroll.setWidgetResizable(True)
+        self.nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav_scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+            "QScrollBar:vertical { background: transparent; width: 4px; border: none; margin: 2px 0; }"
+            "QScrollBar::handle:vertical { background: rgba(245,245,245,0.2); border-radius: 2px; min-height: 20px; }"
+            "QScrollBar::handle:vertical:hover { background: rgba(245,245,245,0.4); }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; background: none; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        )
+
+        self.nav_scroll_content = QWidget()
+        self.nav_layout = QVBoxLayout(self.nav_scroll_content)
+        self.nav_layout.setContentsMargins(10, 10, 10, 10)
+        self.nav_layout.setSpacing(4)
+        self.nav_layout.addStretch()
+
+        self.nav_scroll.setWidget(self.nav_scroll_content)
+        nav_outer.addWidget(self.nav_scroll)
         content_layout.addWidget(self.nav_frame)
 
         self.scroll_area = FadeScrollArea()
@@ -238,6 +262,13 @@ class LifeWindow(QDialog):
                 refresh_callback=self.refresh_view,
                 get_trigger_fail_message=self.life.get_trigger_fail_message,
             ),
+            LifeCollectionTab.tab_name: LifeCollectionTab(
+                get_collection_snapshot=self.life.get_collection_snapshot,
+                get_item_detail=self.life.get_item_detail,
+                get_effect_detail=self.life.get_effect_detail,
+                get_trigger_detail=self.life.get_event_trigger_detail,
+                get_outcome_detail=self.life.get_event_outcome_detail,
+            ),
         }
 
         for tab_name in (
@@ -247,15 +278,15 @@ class LifeWindow(QDialog):
             LifeInventoryTab.tab_name,
             LifeEffectsTab.tab_name,
             LifeEventsTab.tab_name,
+            LifeCollectionTab.tab_name,
         ):
             btn = QPushButton(tab_name)
+            btn.setFixedHeight(36)
             btn.setStyleSheet(NAV_BUTTON_STYLE)
             btn.setCursor(QCursor(Qt.PointingHandCursor))
             btn.clicked.connect(lambda checked=False, name=tab_name: self.switch_tab(name))
             self.tab_buttons[tab_name] = btn
-            self.nav_layout.addWidget(btn)
-
-        self.nav_layout.addStretch()
+            self.nav_layout.insertWidget(self.nav_layout.count() - 1, btn)
 
         scroll_layout = QVBoxLayout(self.scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
@@ -326,6 +357,7 @@ class LifeWindow(QDialog):
         triggers = self.life.get_event_triggers_snapshot()
         recent_event_logs = self.life.get_recent_event_logs()
         tag_display_map = self.life.get_tag_display_map()
+        collection_snapshot = self.life.get_collection_snapshot()
 
         states_tab = self.tab_widgets.get(LifeStatesTab.tab_name)
         nutrition_tab = self.tab_widgets.get(LifeNutritionTab.tab_name)
@@ -333,6 +365,7 @@ class LifeWindow(QDialog):
         inventory_tab = self.tab_widgets.get(LifeInventoryTab.tab_name)
         effects_tab = self.tab_widgets.get(LifeEffectsTab.tab_name)
         events_tab = self.tab_widgets.get(LifeEventsTab.tab_name)
+        collection_tab = self.tab_widgets.get(LifeCollectionTab.tab_name)
 
         if states_tab is not None:
             states_tab.update_data(profile)
@@ -341,6 +374,8 @@ class LifeWindow(QDialog):
         if attrs_tab is not None:
             attrs_tab.update_data(self.life.get_attr_snapshot())
             attrs_tab.update_level(self.life.get_level_snapshot())
+        if collection_tab is not None:
+            collection_tab.update_data(collection_snapshot, self.developer_mode)
 
         # 智能刷新：数据有变化时始终更新（包括当前在该标签页时），无变化时仅在非当前标签页时更新
         current_item_sig = tuple((i["id"], i["count"], i.get("on_cooldown", False)) for i in items)

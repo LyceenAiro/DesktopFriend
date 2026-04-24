@@ -60,6 +60,10 @@ class LifeProfile:
     level: int = 1                                              # 全局角色等级（最低 1）
     exp: float = 0.0                                            # 当前等级已累计经验（始终 ≥ 0）
     permanent_attr_delta: dict[str, float] = field(default_factory=dict)  # 物品永久属性修正（重置前不消失）
+    # 图鉴收集
+    unlocked_buffs: set[str] = field(default_factory=set)       # 曾经触发过的 buff
+    unlocked_triggers: set[str] = field(default_factory=set)    # 曾经完成的事件触发器
+    unlocked_outcomes: set[str] = field(default_factory=set)    # 曾经触发的事件结果
 
 class LifeSystem:
     """0.3 draft implementation for life architecture.
@@ -204,10 +208,10 @@ class LifeSystem:
         state_max = {key: float(defn["max"]) for key, defn in self.state_definitions.items()}
         state_min = {key: float(defn["min"]) for key, defn in self.state_definitions.items()}
         nutrition = {key: float(defn["default"]) for key, defn in self.nutrition_definitions.items()}
-        attrs = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {k: 10.0 for k in BASE_ATTRS}
-        attr_exp = {k: 0.0 for k in (self.attr_definitions.keys() if self.attr_definitions else BASE_ATTRS)}
-        attr_level = {k: 0 for k in (self.attr_definitions.keys() if self.attr_definitions else BASE_ATTRS)}
-        attr_base = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {k: 10.0 for k in BASE_ATTRS}
+        attrs: dict[str, float] = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {}
+        attr_exp: dict[str, float] = {k: 0.0 for k in self.attr_definitions.keys()}
+        attr_level: dict[str, int] = {k: 0 for k in self.attr_definitions.keys()}
+        attr_base: dict[str, float] = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {}
         inventory = self._load_starter_inventory()
         return LifeProfile(states=states, state_max=state_max, state_min=state_min, nutrition=nutrition, attrs=attrs, inventory=inventory, attr_exp=attr_exp, attr_level=attr_level, attr_base=attr_base)
 
@@ -1853,6 +1857,8 @@ class LifeSystem:
             return False
 
         self._apply_record(buff, source="buff", duration_override=duration_override)
+        # 图鉴：记录已解锁 buff
+        self.profile.unlocked_buffs.add(buff_id)
         return True
 
     def list_buff_ids(self) -> list[str]:
@@ -2818,7 +2824,9 @@ class LifeSystem:
 
     def get_attr_snapshot(self) -> list[dict[str, Any]]:
         """返回每个属性的值分解快照：基础值、永久修正、效果修正、等级修正、颜色、经验、等级。"""
-        attr_keys = self.attr_keys
+        if not self.attr_definitions:
+            return []
+        attr_keys = list(self.attr_definitions.keys())
         effect_deltas: dict[str, float] = {k: 0.0 for k in attr_keys}
         for effect in self.profile.active_effects:
             for attr, delta in effect.attr_modifiers.items():
@@ -2898,6 +2906,105 @@ class LifeSystem:
                     count = (current_level - offset - 1) // every
                     total += bonus_val * count
         return total
+
+    def get_collection_snapshot(self) -> dict[str, Any]:
+        """返回图鉴快照，包含物品/效果/触发器/事件结果的收集进度。"""
+        def _entry(rid: str, record: dict) -> dict:
+            return {
+                "id": rid,
+                "name": self._resolve_record_name(record, rid),
+                "desc": self._resolve_record_desc(record),
+            }
+
+        # 物品：动态判断背包持有
+        item_entries: list[dict] = []
+        items_unlocked = 0
+        for rid, rec in self.item_registry.items():
+            unlocked = self.profile.inventory.get(rid, 0) > 0
+            entry = _entry(rid, rec)
+            entry["unlocked"] = unlocked
+            item_entries.append(entry)
+            if unlocked:
+                items_unlocked += 1
+
+        # buff
+        buff_entries: list[dict] = []
+        buffs_unlocked = 0
+        for rid, rec in self.buff_registry.items():
+            unlocked = rid in self.profile.unlocked_buffs
+            entry = _entry(rid, rec)
+            entry["unlocked"] = unlocked
+            buff_entries.append(entry)
+            if unlocked:
+                buffs_unlocked += 1
+
+        # 事件触发器
+        trigger_entries: list[dict] = []
+        triggers_unlocked = 0
+        for rid, rec in self.event_trigger_registry.items():
+            unlocked = rid in self.profile.unlocked_triggers
+            entry = _entry(rid, rec)
+            entry["unlocked"] = unlocked
+            trigger_entries.append(entry)
+            if unlocked:
+                triggers_unlocked += 1
+
+        # 事件结果
+        outcome_entries: list[dict] = []
+        outcomes_unlocked = 0
+        for rid, rec in self.event_outcome_registry.items():
+            unlocked = rid in self.profile.unlocked_outcomes
+            entry = _entry(rid, rec)
+            entry["unlocked"] = unlocked
+            outcome_entries.append(entry)
+            if unlocked:
+                outcomes_unlocked += 1
+
+        # 排序：已解锁在前，其余按 id 字母序
+        def sort_key(e: dict) -> tuple:
+            return (0 if e["unlocked"] else 1, str(e.get("id", "")))
+
+        item_entries.sort(key=sort_key)
+        buff_entries.sort(key=sort_key)
+        trigger_entries.sort(key=sort_key)
+        outcome_entries.sort(key=sort_key)
+
+        return {
+            "items": {
+                "total": len(item_entries),
+                "unlocked": items_unlocked,
+                "entries": item_entries,
+            },
+            "buffs": {
+                "total": len(buff_entries),
+                "unlocked": buffs_unlocked,
+                "entries": buff_entries,
+            },
+            "triggers": {
+                "total": len(trigger_entries),
+                "unlocked": triggers_unlocked,
+                "entries": trigger_entries,
+            },
+            "outcomes": {
+                "total": len(outcome_entries),
+                "unlocked": outcomes_unlocked,
+                "entries": outcome_entries,
+            },
+        }
+
+    def unlock_all_collections(self) -> None:
+        """解锁全部图鉴（物品、效果、触发器、事件结果）。"""
+        for rid in self.item_registry:
+            if self.profile.inventory.get(rid, 0) <= 0:
+                self.profile.inventory[rid] = 1
+        for rid in self.buff_registry:
+            self.profile.unlocked_buffs.add(rid)
+        for rid in self.event_trigger_registry:
+            self.profile.unlocked_triggers.add(rid)
+        for rid in self.event_outcome_registry:
+            self.profile.unlocked_outcomes.add(rid)
+        self._recompute_inventory_passive_attrs()
+        _log.INFO("[Life]已解锁全部图鉴")
 
     def gain_attr_exp(self, attr_id: str, amount: float) -> list[dict[str, Any]]:
         """给指定属性增加经验值，触发升级和永久加成。返回本次升级事件列表。"""
@@ -3231,6 +3338,9 @@ class LifeSystem:
         self._execute_event_guaranteed(trigger, result_log)
         self._execute_event_random_pools(trigger, result_log)
 
+        # 图鉴：记录已解锁的触发器
+        self.profile.unlocked_triggers.add(trigger_id)
+
         _log.DEBUG(f"[Life][Event]完成触发: {trigger_id} 结果数={len(result_log)}")
         _log.INFO(f"[Life][Event]执行完成 trigger={trigger_id} name={trigger_name} results={len(result_log)}")
         self._append_recent_event_log(
@@ -3496,6 +3606,8 @@ class LifeSystem:
         outcome_name = self._resolve_record_name(outcome, outcome_id)
         outcome_desc = self._resolve_record_desc(outcome)
         result_log.append({"type": "outcome", "id": outcome_id, "name": outcome_name, "desc": outcome_desc})
+        # 图鉴：记录已解锁的事件结果
+        self.profile.unlocked_outcomes.add(outcome_id)
         _log.DEBUG(f"[Life][Event]应用 outcome id={outcome_id} depth={depth}")
 
         # 应用 outcome 的直接效果（即时状态变化 + attr_exp）
@@ -3684,6 +3796,10 @@ class LifeSystem:
             "level": self.profile.level,
             "exp": self.profile.exp,
             "permanent_attr_delta": dict(self.profile.permanent_attr_delta),
+            # 图鉴收集
+            "unlocked_buffs": list(self.profile.unlocked_buffs),
+            "unlocked_triggers": list(self.profile.unlocked_triggers),
+            "unlocked_outcomes": list(self.profile.unlocked_outcomes),
             "recent_event_logs": list(self._recent_event_logs),
             "recent_event_log_seq": int(self._recent_event_log_seq),
         }
@@ -3842,6 +3958,11 @@ class LifeSystem:
             self._recent_event_log_seq = len(self._recent_event_logs)
             for idx, row in enumerate(self._recent_event_logs, start=1):
                 row["seq"] = idx
+
+        # 图鉴收集
+        self.profile.unlocked_buffs = set(data.get("unlocked_buffs", []))
+        self.profile.unlocked_triggers = set(data.get("unlocked_triggers", []))
+        self.profile.unlocked_outcomes = set(data.get("unlocked_outcomes", []))
 
         self._recompute_inventory_passive_attrs()
         _log.INFO(

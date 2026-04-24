@@ -317,7 +317,10 @@ class LifeEventsTab(QFrame):
         row_layout.setContentsMargins(12, 10, 12, 10)
         row_layout.setSpacing(10)
 
-        text_block = QVBoxLayout()
+        text_container = QFrame()
+        text_container.setStyleSheet("QFrame { background: transparent; border: none; }")
+        text_block = QVBoxLayout(text_container)
+        text_block.setContentsMargins(0, 0, 0, 0)
         text_block.setSpacing(3)
 
         title_row = QHBoxLayout()
@@ -360,7 +363,7 @@ class LifeEventsTab(QFrame):
             subtitle.setStyleSheet("background: transparent; border: none;")
             text_block.addWidget(subtitle)
 
-        row_layout.addLayout(text_block, 1)
+        row_layout.addWidget(text_container, 1, Qt.AlignVCenter)
 
         # 详情按钮
         info_btn = QPushButton(tr("life.events.info"))

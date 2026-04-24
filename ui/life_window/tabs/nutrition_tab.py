@@ -35,7 +35,7 @@ class LifeNutritionTab(QFrame):
             row_frame = QFrame()
             row_layout = QVBoxLayout(row_frame)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(5)
+            row_layout.setSpacing(0)
 
             top_row = QHBoxLayout()
             top_row.setSpacing(12)
@@ -54,6 +54,7 @@ class LifeNutritionTab(QFrame):
             detail_label = QLabel("")
             detail_label.setObjectName("helperText")
             detail_label.setWordWrap(True)
+            detail_label.setVisible(False)
             row_layout.addWidget(detail_label)
 
             card_layout.addWidget(row_frame)
@@ -124,11 +125,9 @@ class LifeNutritionTab(QFrame):
                     )
 
             if matched_effects:
-                detail_text = tr(
-                    "life.nutrition.row.detail.active",
-                    decay=f"{decay:g}",
-                    effects=" | ".join(matched_effects),
-                )
+                detail_text = " | ".join(matched_effects)
+                self.detail_labels[nutrition_id].setText(detail_text)
+                self.detail_labels[nutrition_id].setVisible(True)
             else:
-                detail_text = tr("life.nutrition.row.detail", decay=f"{decay:g}")
-            self.detail_labels[nutrition_id].setText(detail_text)
+                self.detail_labels[nutrition_id].setText("")
+                self.detail_labels[nutrition_id].setVisible(False)

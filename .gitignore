@@ -1,6 +1,7 @@
 # 构建文件
 __pycache__
 *.pyc
+.claude
 build
 dist
 *spec

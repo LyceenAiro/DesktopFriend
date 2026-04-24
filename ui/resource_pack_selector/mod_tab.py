@@ -256,6 +256,7 @@ class ModManagerTab(QWidget):
         self._mods: list[tuple[str, dict]] = []
         self._issues: dict[str, list[str]] = {}
         self._known_mod_ids: list[str] = []
+        self._last_mod_dir_names: list[str] = []
         self._init_ui()
         self._load_mods()
 
@@ -298,6 +299,11 @@ class ModManagerTab(QWidget):
         footer.setSpacing(10)
         footer.addStretch()
 
+        open_dir_btn = QPushButton(tr("mod_manager.open_dir"))
+        open_dir_btn.setObjectName("secondaryButton")
+        open_dir_btn.clicked.connect(self._open_mod_dir)
+        footer.addWidget(open_dir_btn)
+
         exit_btn = QPushButton(tr("resource_selector.exit"))
         exit_btn.setObjectName("secondaryButton")
         exit_btn.clicked.connect(self.exit_requested.emit)
@@ -312,24 +318,28 @@ class ModManagerTab(QWidget):
 
     # ── 热加载检测 ───────────────────────────────────────────────────────
 
+    def _quick_scan_mod_dirs(self) -> list[str] | None:
+        """轻量扫描 mod/ 子目录名，无变化时返回 None，有变化返回目录名列表。"""
+        mod_root = Path("mod")
+        if not mod_root.exists():
+            return None if not self._known_mod_ids else []
+        try:
+            current_dirs = sorted(
+                p.name for p in mod_root.iterdir() if p.is_dir()
+            )
+        except Exception:
+            return None
+        if current_dirs == self._last_mod_dir_names:
+            return None
+        return current_dirs
+
     def _hot_reload_check(self) -> None:
         """定期扫描 mod/ 目录，有增减时自动刷新列表（保留已有排序）。"""
-        try:
-            from expansion.life.mod import LifeModRegistry
-            registry = LifeModRegistry(mod_root="mod", protocol_version="0.3")
-            mod_dirs = registry.discover()
-            current_ids = []
-            for mod_dir in mod_dirs:
-                pack = registry.load_pack_info(mod_dir)
-                if pack:
-                    mod_id = str(pack.get("id") or mod_dir.name).strip()
-                    current_ids.append(mod_id)
-        except Exception:
+        dir_names = self._quick_scan_mod_dirs()
+        if dir_names is None:
             return
 
-        if set(current_ids) == set(self._known_mod_ids):
-            return
-
+        self._last_mod_dir_names = dir_names
         _log.DEBUG("[ModTab]热加载：mod 目录有变化，刷新列表")
         self._load_mods()
 
@@ -339,14 +349,10 @@ class ModManagerTab(QWidget):
         try:
             from expansion.life.mod import LifeModRegistry
             registry = LifeModRegistry(mod_root="mod", protocol_version="0.3")
-            mod_dirs = registry.discover()
-            self._issues = registry.validate()
-            raw: list[tuple[str, dict]] = []
-            for mod_dir in mod_dirs:
-                pack = registry.load_pack_info(mod_dir)
-                if pack:
-                    mod_id = str(pack.get("id") or mod_dir.name).strip()
-                    raw.append((mod_id, pack))
+            collected = registry._collect_mods()
+            info_map, _, _, issues = collected
+            self._issues = dict(issues)
+            raw = list(info_map.items())
         except Exception as e:
             _log.WARN(f"[ModTab]扫描 mod 失败: {e}")
             raw = []
@@ -367,7 +373,21 @@ class ModManagerTab(QWidget):
             self._mods = raw
 
         self._known_mod_ids = [mid for mid, _ in self._mods]
+        self._sync_dir_snapshot()
         self._render_list()
+
+    def _sync_dir_snapshot(self) -> None:
+        """同步当前 mod 目录快照，供热加载轻量比较。"""
+        mod_root = Path("mod")
+        if mod_root.exists():
+            try:
+                self._last_mod_dir_names = sorted(
+                    p.name for p in mod_root.iterdir() if p.is_dir()
+                )
+            except Exception:
+                pass
+        else:
+            self._last_mod_dir_names = []
 
     # ── 列表渲染 ─────────────────────────────────────────────────────────
 
@@ -403,6 +423,23 @@ class ModManagerTab(QWidget):
             has_author = bool(pack.get("author", ""))
             item.setSizeHint(QSize(0, 58 if has_author else 44))
             self.mod_list.setItemWidget(item, widget)
+
+    # ── 工具方法 ─────────────────────────────────────────────────────────
+
+    def _open_mod_dir(self) -> None:
+        """在系统文件管理器中打开 mod 目录。"""
+        import subprocess, sys
+        mod_dir = Path("mod").resolve()
+        mod_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(f'explorer "{mod_dir}"')
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(mod_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(mod_dir)])
+        except Exception as e:
+            _log.WARN(f"[ModTab]打开 mod 目录失败: {e}")
 
     # ── 拖拽回调 ─────────────────────────────────────────────────────────
 
