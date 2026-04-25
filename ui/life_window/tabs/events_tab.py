@@ -642,9 +642,10 @@ class LifeEventsTab(QFrame):
             str(detail.get("name", "")),
             desc,
             debug_lines=debug_lines,
+            icon_base64=detail.get("icon_base64"),
             parent=self,
         )
-        dialog.exec()
+        dialog.show()
 
     def _build_trigger_debug_lines(self, detail: dict[str, Any]) -> list[str]:
         lines = [

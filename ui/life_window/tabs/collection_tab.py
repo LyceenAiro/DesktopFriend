@@ -171,4 +171,4 @@ class LifeCollectionTab(QFrame):
             developer_mode=self._developer_mode,
             parent=self,
         )
-        dialog.exec()
+        dialog.show()

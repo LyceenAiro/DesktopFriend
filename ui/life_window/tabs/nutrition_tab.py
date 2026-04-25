@@ -9,7 +9,6 @@ from util.i18n import tr
 
 class LifeNutritionTab(QFrame):
     tab_name = tr("life.tabs.nutrition")
-    _MIN_VISIBLE_PERCENT = 4
 
     def __init__(self, nutrition_definitions: list[dict] | None = None, parent=None):
         super().__init__(parent)
@@ -22,7 +21,6 @@ class LifeNutritionTab(QFrame):
 
         self._nutrition_defs = nutrition_definitions or []
         self.progress_rows: dict[str, HoverDetailProgressBar] = {}
-        self.detail_labels: dict[str, QLabel] = {}
 
         for nutrition_def in self._nutrition_defs:
             nutrition_id = str(nutrition_def.get("id") or "").strip()
@@ -51,15 +49,8 @@ class LifeNutritionTab(QFrame):
             top_row.addWidget(bar, 1)
             row_layout.addLayout(top_row)
 
-            detail_label = QLabel("")
-            detail_label.setObjectName("helperText")
-            detail_label.setWordWrap(True)
-            detail_label.setVisible(False)
-            row_layout.addWidget(detail_label)
-
             card_layout.addWidget(row_frame)
             self.progress_rows[nutrition_id] = bar
-            self.detail_labels[nutrition_id] = detail_label
 
         layout.addWidget(nutrition_card)
         layout.addStretch()
@@ -73,61 +64,5 @@ class LifeNutritionTab(QFrame):
                 continue
 
             row = snapshot_map.get(nutrition_id, {})
-            value = float(row.get("value", nutrition_def.get("default", 0.0)))
-            vmax = float(row.get("max", nutrition_def.get("max", 100.0)))
-            decay = float(row.get("decay", nutrition_def.get("decay", 0.0)))
-            tick_delta = float(row.get("tick_delta", -decay))
-            safe_max = vmax if vmax > 0 else 1.0
-            percent = int(round(max(0.0, min(1.0, value / safe_max)) * 100))
-            if 0 < percent < self._MIN_VISIBLE_PERCENT:
-                percent = self._MIN_VISIBLE_PERCENT
-
-            self.progress_rows[nutrition_id].set_ratios(percent / 100.0, 1.0)
-            self.progress_rows[nutrition_id].set_detail(
-                tr(
-                    "life.nutrition.popup.value",
-                    value=f"{int(round(value))}",
-                    vmax=f"{int(round(vmax))}",
-                )
-            )
-            self.progress_rows[nutrition_id].set_legacy_metrics(
-                tick_delta=tick_delta,
-                fixed_delta=0.0,
-                percent_delta=0.0,
-                percent_value=0.0,
-            )
-
-            matched_effects: list[str] = []
-            for effect in list(nutrition_def.get("effects", [])):
-                if not isinstance(effect, dict):
-                    continue
-                min_v = float(effect.get("min", float("-inf")))
-                max_v = float(effect.get("max", float("inf")))
-                if not (min_v <= value < max_v):
-                    continue
-
-                state_changes = []
-                for state_key, delta in dict(effect.get("states", {})).items():
-                    state_label = tr(f"life.state.{state_key}", default=str(state_key))
-                    state_changes.append(f"{state_label} {delta:+g}")
-                attr_changes = []
-                for attr_key, delta in dict(effect.get("attrs", {})).items():
-                    attr_label = tr(f"life.attr.{attr_key}", default=str(attr_key))
-                    attr_changes.append(f"{attr_label} {delta:+g}")
-                effect_parts = state_changes + attr_changes
-                if effect_parts:
-                    matched_effects.append(
-                        tr(
-                            "life.nutrition.effect.active",
-                            range=f"[{int(round(min_v))}, {int(round(max_v))})",
-                            effect=", ".join(effect_parts),
-                        )
-                    )
-
-            if matched_effects:
-                detail_text = " | ".join(matched_effects)
-                self.detail_labels[nutrition_id].setText(detail_text)
-                self.detail_labels[nutrition_id].setVisible(True)
-            else:
-                self.detail_labels[nutrition_id].setText("")
-                self.detail_labels[nutrition_id].setVisible(False)
+            bar = self.progress_rows[nutrition_id]
+            bar.set_state_payload(row)

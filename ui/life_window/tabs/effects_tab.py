@@ -321,5 +321,9 @@ class LifeEffectsTab(QFrame):
                 debug_lines.append(f"{tr('life.inventory.info.effect.caps')}:")
                 debug_lines.extend(cap_lines)
 
-        dialog = LifeInfoDialog(effect_name, effect_desc, debug_lines, self)
-        dialog.exec()
+        dialog = LifeInfoDialog(
+            effect_name, effect_desc, debug_lines,
+            icon_base64=detail.get("icon_base64"),
+            parent=self,
+        )
+        dialog.show()

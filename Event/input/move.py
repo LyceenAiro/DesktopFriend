@@ -31,7 +31,7 @@ def move_right(self: DesktopPet):
         _walk.start_right()
 
 def move_jump(self: DesktopPet):
-    _log.DEBUG("跳跃")
+    _log.INFO("跳跃")
     if hasattr(self, 'jump_timer') and self.jump_timer:
         self.move_count = 0
         self.jump_timer.stop()

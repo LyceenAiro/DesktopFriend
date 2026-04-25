@@ -86,12 +86,13 @@ def _validate_cap_modifier(
     record_id: str,
     state_keys: set[str],
     attr_keys: set[str],
+    nutrition_keys: set[str] | None = None,
 ) -> bool:
     for suffix in ("_max", "_min", "_max2"):
         if key.endswith(suffix):
             base = key[: -len(suffix)]
-            if base not in state_keys and base not in attr_keys:
-                issues.append(ValidationIssue("warn", "上下限字段基础名不在已知状态/属性中", source, record_id, key))
+            if base not in state_keys and base not in attr_keys and base not in (nutrition_keys or set()):
+                issues.append(ValidationIssue("warn", "上下限字段基础名不在已知状态/属性/营养中", source, record_id, key))
             if not (_is_number_like(value) or _is_percent_string(value)):
                 issues.append(ValidationIssue("error", "上下限字段值应为数值或百分比字符串", source, record_id, key))
             return True
@@ -168,7 +169,7 @@ def validate_buff_record(
         if _validate_periodic_key(key, value, issues, source, record_id, valid_states, valid_nutrition):
             continue
 
-        if _validate_cap_modifier(key, value, issues, source, record_id, valid_states, valid_attrs):
+        if _validate_cap_modifier(key, value, issues, source, record_id, valid_states, valid_attrs, valid_nutrition):
             continue
 
         issues.append(ValidationIssue("warn", "未识别字段，将按原始逻辑透传", source, record_id, key))
@@ -234,6 +235,7 @@ def validate_item_record(
             "name_i18n_key",
             "desc_i18n_key",
             "description_i18n_key",
+            "icon_base64",
             "usable",
             "unique",
             "passive_attr_bonus",
@@ -339,7 +341,7 @@ def validate_item_record(
         if _validate_periodic_key(key, value, issues, source, record_id, valid_states):
             continue
 
-        if _validate_cap_modifier(key, value, issues, source, record_id, valid_states, valid_attrs):
+        if _validate_cap_modifier(key, value, issues, source, record_id, valid_states, valid_attrs, valid_nutrition):
             continue
 
         issues.append(ValidationIssue("warn", "未识别字段，将按原始逻辑透传", source, record_id, key))
@@ -559,6 +561,7 @@ def validate_event_trigger_record(
     known_keys = {
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
+        "icon_base64",
         "cooldown_s", "duration_s", "mutex", "guaranteed", "random_pools",
         "requires_item", "requires_no_item",
         "costs", "tags_mode", "mutex_by_tag",
@@ -607,6 +610,7 @@ def validate_event_outcome_record(
     known_keys = {
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
+        "icon_base64",
         "guaranteed", "random_pools", "effects", "permanent_attr_delta",
         # 等级/经验联动（Phase 4）
         "exp", "min_level", "clear_buffs",
@@ -887,6 +891,94 @@ def validate_tag_record(
         "id", "buff_id", "name", "i18n_key", "color",
         "use_restricted_i18n_key", "fire_restricted_i18n_key",
         "global_event",
+    }
+    for key in record:
+        if key not in known_keys:
+            issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    return issues
+
+
+def validate_state_record(
+    record: dict[str, Any],
+    source: str,
+) -> list[ValidationIssue]:
+    """校验状态定义记录（module/life/status/ 目录）。"""
+    issues: list[ValidationIssue] = []
+    record_id = str(record.get("id") or record.get("name") or "<unknown>")
+
+    if "id" not in record or not str(record.get("id", "")).strip():
+        issues.append(ValidationIssue("error", "state 缺少 id", source, record_id, "id"))
+    if "name" not in record:
+        issues.append(ValidationIssue("warn", "state 缺少 name", source, record_id, "name"))
+    for str_field in ("i18n_key",):
+        if str_field in record and not isinstance(record[str_field], str):
+            issues.append(ValidationIssue("error", f"{str_field} 必须是字符串", source, record_id, str_field))
+    for num_field in ("default", "min", "max"):
+        if num_field in record and not _is_number_like(record[num_field]):
+            issues.append(ValidationIssue("warn", f"{num_field} 建议为数值", source, record_id, num_field))
+    if "order" in record and not isinstance(record["order"], int):
+        issues.append(ValidationIssue("warn", "order 建议为整数", source, record_id, "order"))
+
+    effects = record.get("effects")
+    if effects is not None:
+        if not isinstance(effects, list):
+            issues.append(ValidationIssue("error", "effects 必须是列表", source, record_id, "effects"))
+        else:
+            for ei, effect in enumerate(effects):
+                if not isinstance(effect, dict):
+                    issues.append(ValidationIssue("error", f"effects[{ei}] 必须是字典", source, record_id, f"effects[{ei}]"))
+                    continue
+                for cond_key in ("requires_buff", "requires_no_buff"):
+                    if cond_key in effect and not isinstance(effect[cond_key], (str, list)):
+                        issues.append(ValidationIssue("warn", f"effects[{ei}].{cond_key} 应为字符串或字符串列表", source, record_id, f"effects[{ei}].{cond_key}"))
+
+    known_keys = {
+        "id", "name", "i18n_key", "default", "min", "max", "order", "effects",
+    }
+    for key in record:
+        if key not in known_keys:
+            issues.append(ValidationIssue("warn", "未识别字段", source, record_id, key))
+
+    return issues
+
+
+def validate_nutrition_record(
+    record: dict[str, Any],
+    source: str,
+) -> list[ValidationIssue]:
+    """校验营养定义记录（module/life/nutrition/ 目录）。"""
+    issues: list[ValidationIssue] = []
+    record_id = str(record.get("id") or record.get("name") or "<unknown>")
+
+    if "id" not in record or not str(record.get("id", "")).strip():
+        issues.append(ValidationIssue("error", "nutrition 缺少 id", source, record_id, "id"))
+    if "name" not in record:
+        issues.append(ValidationIssue("warn", "nutrition 缺少 name", source, record_id, "name"))
+    for str_field in ("i18n_key",):
+        if str_field in record and not isinstance(record[str_field], str):
+            issues.append(ValidationIssue("error", f"{str_field} 必须是字符串", source, record_id, str_field))
+    for num_field in ("default", "min", "max", "decay"):
+        if num_field in record and not _is_number_like(record[num_field]):
+            issues.append(ValidationIssue("warn", f"{num_field} 建议为数值", source, record_id, num_field))
+    if "order" in record and not isinstance(record["order"], int):
+        issues.append(ValidationIssue("warn", "order 建议为整数", source, record_id, "order"))
+
+    effects = record.get("effects")
+    if effects is not None:
+        if not isinstance(effects, list):
+            issues.append(ValidationIssue("error", "effects 必须是列表", source, record_id, "effects"))
+        else:
+            for ei, effect in enumerate(effects):
+                if not isinstance(effect, dict):
+                    issues.append(ValidationIssue("error", f"effects[{ei}] 必须是字典", source, record_id, f"effects[{ei}]"))
+                    continue
+                for cond_key in ("requires_buff", "requires_no_buff"):
+                    if cond_key in effect and not isinstance(effect[cond_key], (str, list)):
+                        issues.append(ValidationIssue("warn", f"effects[{ei}].{cond_key} 应为字符串或字符串列表", source, record_id, f"effects[{ei}].{cond_key}"))
+
+    known_keys = {
+        "id", "name", "i18n_key", "default", "min", "max", "order", "decay", "effects",
     }
     for key in record:
         if key not in known_keys:

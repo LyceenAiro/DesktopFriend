@@ -1,9 +1,0 @@
-{
-  "classes": ["first_aid"],
-  "class_definitions": {
-    "first_aid": {
-      "name": "急救",
-      "name_i18n_key": "life.buff_class.first_aid"
-    }
-  }
-}

@@ -35,5 +35,25 @@
     "desc_i18n_key": "life.buff.depressed.desc",
     "happys": -0.01,
     "vit": -5
+  },
+  {
+    "id": "death",
+    "name": "死亡",
+    "name_i18n_key": "life.buff.death.name",
+    "desc": "生命体征已消失。",
+    "desc_i18n_key": "life.buff.death.desc",
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAjElEQVRYhe2U0QqAIAxFr9FPB9FDBH32epqgSV4SUXHnSWRj7uAGGMbsODJOyDw2zrOQD6hG7oUCANdxB5f7ucX5bNyLbg0kO4rRDtm4VL3mBtaS5FznDM0NsPNcrV53BgQAROoIcM6X84fuDCjz/oEcnxuS2f0xwxlQAhN/OleaGyhFSidmeAOGMT4PksciqAKs/tEAAAAASUVORK5CYII="
+  },
+  {
+    "id": "dying",
+    "name": "濒死",
+    "name_i18n_key": "life.buff.dying.name",
+    "desc": "生命体征微弱，仅能进行急救相关的操作。",
+    "desc_i18n_key": "life.buff.dying.desc",
+    "restrict_item_tags": ["first_aid"],
+    "restrict_trigger_tags": ["first_aid"],
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAsElEQVRYhe2USw6AIAxEB+MVTLz/6Uw8RF0QiJbfqDFA5K2UTKEdWoDB4O8YUidkHKvzTGQCn1HKUABgw3JZXLHreFYX0KwD0Yocp8qQ00X0wXnVHZjviF0lIrbZjWGHKE11B9h5touqcv3vekH3SO685hwQnCoLxOrOU71AxPuP6g7oKTCwmUZLKN0xMR3t90CJywuZeRfofbtzwBF14sl+1R14i6ReTZbuHRgM+ucAEUk1KUeHS0YAAAAASUVORK5CYII="
   }
 ]

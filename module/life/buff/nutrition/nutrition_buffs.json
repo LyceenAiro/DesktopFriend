@@ -26,7 +26,7 @@
     "name": "严重饥饿",
     "desc": "非常的饿，感觉一点力气也没有。",
     "display_in_status_bar": true,
-    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABA0lEQVRYhe2VQQqCQBSG/7KDBOIyME/QIVwJncJrjKcQXHUCD2GBSwk6hTt5LUJR03zz1KTwhwFhZvg+fW9GYM2aNf+Si+PQxXFId99uKvjBOr6eAXKTZMPdy17IgZdJsyu4EqMEuuC6Ets54ABgWjY4PSESGILn4PeitsDQZy/h9+w2bwm64KZla8HFAml2nQQuEnh4XkMiB4nhIgEAOMVxQ0IKh+49oJQi3/cRBAEAYB9F1ZybJJvQMN7a/1wUoy+7Ck5EpJTqPWOhYRAB1egSEoE58FkFOHCpAOtvWNb8E3hobrJe6IPU37w9JimFVOIr8D6Jr8LbEovA6xKLwdf8XJ7szM/bmt67RgAAAABJRU5ErkJggg==",
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABL0lEQVRYhe2XMYrCQBSGv4iyjaBlKg9gpbCNB/AAHkHwEAELKw+wjdXW22y7F9gg2FjbWNhqIyo2y4Jvi2QkCTNRYyCJ69/NvDfz5v94vBB46r/LSvEuSVKjlOIDEikNAgIwbLUAeK1WAbBLnreO68bWypxA+Y6zAvD91gdg+7mEgPO24wAw85M7rqt6JEQicwJJeiDk3K5VQsHF+8Lb90msTycAetOptmbmBG7pgZBzk5qDJgRIzI/H2PxCEQBgvfsBwK6/eOv9rzZOtwHAePShQg82B85OI1ptDgA4ky+1le9vwc0ElEOTrnWulDmBa14pACLeKLcs/ZHAoNcmiJ8SjeeagMl5LLWoU5NzpVwSSORcc0msc6X8EriQY1TheiA1CYiY/w2M8cchUFj9AT5RWfnGe1sdAAAAAElFTkSuQmCC",
     "hps": -2,
     "happys": -2,
     "energy_max": "-30%"
@@ -35,20 +35,26 @@
     "id": "refreshed",
     "name": "滋润",
     "desc": "水分充足，喉咙感觉很舒适。",
-    "happys": 0.01
+    "happys": 0.01,
+    "hydration_max": "10%"
   },
   {
     "id": "water_intox",
     "name": "水中毒",
     "desc": "喝太多水了，电解质紊乱。",
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAk0lEQVRYhe2WSwqAMAwFE/Gm4qnEs8aFH9pIapu2FOENCG5MpnlRJAIA+JHrqmJq4+KHHc8IEdGynYff16eEp9b4CUCgJLcoe413F4ZPAAI5eSWz15TuwvAJQAAC1V/CYOtdfeYCARMR+xVlTgu6/we0wN3IuDf7/GoHLCQjArNPE4HAhJg5iuGrTwuBl0in+qAPB70ZKyXWpzjgAAAAAElFTkSuQmCC",
     "hps": -2,
     "psc_max": "-20%",
-    "energy_max": "-40%"
+    "energy_max": "-40%",
+    "hydration_max": "10%"
   },
   {
     "id": "thirsty",
     "name": "口渴",
     "desc": "缺水，精神与体力上限下降。",
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAfElEQVRYhe2WXQqAIBCEp64anSo66/bQDykqOhWLMR/4IrjOziwiIITgsWM9YnxHC89AnDEAmJa9+XW+SjC1/B2QgJbcguxj2Flwd0ACavIqZh/TOgvuDkiABOglpP8DVZvpC4M7u3SgiGXMiDs/cXfgMwywnBt3/utAN2wOYhoh//NiJQAAAABJRU5ErkJggg==",
     "happys": -0.01,
     "psc_max": "-5%",
     "energy_max": "-8%"
@@ -58,7 +64,7 @@
     "name": "严重缺水",
     "desc": "非常口渴，嗓子完全干掉了。",
     "display_in_status_bar": true,
-    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAxUlEQVRYhWNgGAWjYBSMAgpAdN7D/5SawUSJ5Ry6chQ7gmwHUAswkqMJ5nsY+HH5EcPSSfJkmTX0QgDd9zBAbigMrRDA5XsYICcUBjwEBtwBLNQ0zGOqEoMHMzNKwRT79y/eKCEpBJZOkmf8cfkRVjmYeMzfv3BMDCA5BJZOkmfEVvwunSTPiO57uoPFzMz//zMwwPFiIhxElTSAzyKYHKG0QLEDkH2OjokJCZo5gi6W43IEXS1Hd8SAWI7siAGzfBQMOQAAlv50IaviopcAAAAASUVORK5CYII=",
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAk0lEQVRYhe2U0QqAMAhFXfSn0VfVvtUemlGCq5kgGx7oYdjEe68MIAgCPVi+X0w2s+hJijsIALBsp/i8Xi00vfwdiAFacntkz9HugrsDMcCXvKrZc1p3wd2BGGC2arSX7LNQx7JLie2GuwPmLyFVSamknOjKAUJ6EBL7qaqccHfAHARAvLnEz5xxHHhTKtXHcaBbDrscK7ULHetZAAAAAElFTkSuQmCC",
     "hps": -2,
     "happys": -2,
     "psc_max": "-20%",

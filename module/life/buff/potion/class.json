@@ -1,9 +1,0 @@
-{
-  "classes": ["potion"],
-  "class_definitions": {
-    "potion": {
-      "name": "药剂",
-      "name_i18n_key": "life.buff_class.potion"
-    }
-  }
-}

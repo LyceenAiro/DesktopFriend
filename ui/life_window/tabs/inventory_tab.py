@@ -391,9 +391,10 @@ class LifeInventoryTab(QFrame):
             str(detail.get("name", "")),
             str(detail.get("desc", "")).strip(),
             debug_lines=self._build_item_debug_lines(detail, self._get_item_effect_summary(item_id)) if self._developer_mode else None,
+            icon_base64=detail.get("icon_base64"),
             parent=self,
         )
-        dialog.exec()
+        dialog.show()
 
     def _build_item_debug_lines(self, detail: dict, summary: dict | None) -> list[str]:
         lines = [

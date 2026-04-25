@@ -41,11 +41,27 @@ def _read_order() -> list[str]:
     return []
 
 
-def _write_order(order: list[str]) -> None:
+def _read_disabled_mods() -> set[str]:
+    try:
+        if _ORDER_FILE.exists():
+            data = json.loads(_ORDER_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                disabled = data.get("disabled_mods", [])
+                if isinstance(disabled, list):
+                    return {str(x).strip() for x in disabled if str(x).strip()}
+    except Exception:
+        pass
+    return set()
+
+
+def _write_order(order: list[str], disabled_mods: set[str] | None = None) -> None:
     try:
         _ORDER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {"order": order}
+        if disabled_mods:
+            data["disabled_mods"] = sorted(disabled_mods)
         _ORDER_FILE.write_text(
-            json.dumps({"order": order}, ensure_ascii=False, indent=2),
+            json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     except Exception as e:
@@ -63,10 +79,11 @@ class ModDetailDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setModal(True)
+        self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumWidth(400)
         self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.Dialog
+            Qt.FramelessWindowHint | Qt.Window
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
 
@@ -174,12 +191,16 @@ class ModListItem(QWidget):
         mod_id: str,
         pack_info: dict,
         issues: list[str],
+        disabled: bool = False,
+        on_toggle=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.mod_id = mod_id
         self._pack_info = pack_info
         self._issues = issues
+        self._disabled = disabled
+        self._on_toggle = on_toggle
         # 不在此处设置 stylesheet，避免打断父级样式表继承（会导致子 widget 样式失效）
         # 黄色背景通过 paintEvent 直接绘制
 
@@ -230,6 +251,15 @@ class ModListItem(QWidget):
         detail_btn.clicked.connect(self._show_detail)
         layout.addWidget(detail_btn, 0, Qt.AlignVCenter)
 
+        self._toggle_btn = QPushButton()
+        self._toggle_btn.setFixedSize(24, 24)
+        self._toggle_btn.setCursor(Qt.PointingHandCursor)
+        self._toggle_btn.clicked.connect(self._toggle)
+        self._update_toggle_button()
+        layout.addWidget(self._toggle_btn, 0, Qt.AlignVCenter)
+
+        self._apply_disabled_style()
+
     def paintEvent(self, event) -> None:
         if self._issues:
             painter = QPainter(self)
@@ -242,7 +272,45 @@ class ModListItem(QWidget):
 
     def _show_detail(self) -> None:
         dlg = ModDetailDialog(self.mod_id, self._pack_info, self._issues, self.window())
-        dlg.exec()
+        dlg.show()
+
+    def _toggle(self) -> None:
+        if self._on_toggle:
+            self._on_toggle(self.mod_id)
+
+    def set_disabled(self, value: bool) -> None:
+        self._disabled = value
+        self._update_toggle_button()
+        self._apply_disabled_style()
+
+    def _update_toggle_button(self) -> None:
+        if self._disabled:
+            self._toggle_btn.setText("○")
+            self._toggle_btn.setToolTip(tr("mod_manager.tooltip.enable"))
+            self._toggle_btn.setStyleSheet(
+                "QPushButton { background-color: #2a2a2a; color: #888;"
+                " border: 1px solid #3a3a3a; border-radius: 4px;"
+                " font-size: 14px; font-weight: 600; }"
+                "QPushButton:hover { background-color: #383838; color: #aaa; }"
+            )
+        else:
+            self._toggle_btn.setText("●")
+            self._toggle_btn.setToolTip(tr("mod_manager.tooltip.disable"))
+            self._toggle_btn.setStyleSheet(
+                "QPushButton { background-color: #1a3050; color: #5ab4d8;"
+                " border: 1px solid #2a4a6a; border-radius: 4px;"
+                " font-size: 14px; font-weight: 600; }"
+                "QPushButton:hover { background-color: #244060; color: #7ac8f0; }"
+            )
+
+    def _apply_disabled_style(self) -> None:
+        alpha = "80" if self._disabled else "ff"
+        name_lbl = self.findChild(QLabel, "modName")
+        ver_lbl = self.findChild(QLabel, "modVersion")
+        author_lbl = self.findChild(QLabel, "modAuthor")
+        for lbl in (name_lbl, ver_lbl, author_lbl):
+            if lbl:
+                lbl.setStyleSheet(f"color: #{alpha}{alpha}{alpha};")
 
 
 class ModManagerTab(QWidget):
@@ -257,6 +325,7 @@ class ModManagerTab(QWidget):
         self._issues: dict[str, list[str]] = {}
         self._known_mod_ids: list[str] = []
         self._last_mod_dir_names: list[str] = []
+        self._disabled_mod_ids: set[str] = set()
         self._init_ui()
         self._load_mods()
 
@@ -358,6 +427,7 @@ class ModManagerTab(QWidget):
             raw = []
 
         saved_order = _read_order()
+        self._disabled_mod_ids = _read_disabled_mods()
         if saved_order:
             order_map = {mid: pack for mid, pack in raw}
             ordered: list[tuple[str, dict]] = []
@@ -401,7 +471,11 @@ class ModManagerTab(QWidget):
 
         for mod_id, pack in self._mods:
             issues = self._issues.get(mod_id, [])
-            widget = ModListItem(mod_id, pack, issues)
+            is_disabled = mod_id in self._disabled_mod_ids
+            widget = ModListItem(
+                mod_id, pack, issues, is_disabled,
+                on_toggle=lambda mid=mod_id: self._toggle_mod_enabled(mid),
+            )
             item = QListWidgetItem()
             item.setData(Qt.UserRole, mod_id)
             has_author = bool(pack.get("author", ""))
@@ -419,15 +493,34 @@ class ModManagerTab(QWidget):
             mid = item.data(Qt.UserRole)
             pack = mod_map.get(mid, {})
             issues = self._issues.get(mid, [])
-            widget = ModListItem(mid, pack, issues)
+            is_disabled = mid in self._disabled_mod_ids
+            widget = ModListItem(
+                mid, pack, issues, is_disabled,
+                on_toggle=lambda m=mid: self._toggle_mod_enabled(m),
+            )
             has_author = bool(pack.get("author", ""))
             item.setSizeHint(QSize(0, 58 if has_author else 44))
             self.mod_list.setItemWidget(item, widget)
 
     # ── 工具方法 ─────────────────────────────────────────────────────────
 
+    def _toggle_mod_enabled(self, mod_id: str) -> None:
+        """切换 Mod 启用/禁用状态。"""
+        if mod_id in self._disabled_mod_ids:
+            self._disabled_mod_ids.discard(mod_id)
+            _log.DEBUG(f"[ModTab]启用 mod: {mod_id}")
+        else:
+            self._disabled_mod_ids.add(mod_id)
+            _log.DEBUG(f"[ModTab]禁用 mod: {mod_id}")
+        self._save_disabled_state()
+        self._render_list()
+
+    def _save_disabled_state(self) -> None:
+        """将启用/禁用状态写入 load_order.json。"""
+        order = [mid for mid, _ in self._mods]
+        _write_order(order, self._disabled_mod_ids)
+
     def _open_mod_dir(self) -> None:
-        """在系统文件管理器中打开 mod 目录。"""
         import subprocess, sys
         mod_dir = Path("mod").resolve()
         mod_dir.mkdir(parents=True, exist_ok=True)

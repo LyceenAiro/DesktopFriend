@@ -20,6 +20,8 @@ from module.life.schema import (
     validate_event_trigger_record,
     validate_event_outcome_record,
     validate_level_config,
+    validate_state_record,
+    validate_nutrition_record,
 )
 from module.life.sqlite_store import LifeSqliteStore
 
@@ -42,6 +44,7 @@ class LifeEffect:
     attr_modifiers: dict[str, float] = field(default_factory=dict)
     managed: bool = False  # 由外部（如营养系统）管理生命周期，不倒计时也不自动移除
     nutrition_per_tick: dict[str, float] = field(default_factory=dict)  # 每 tick 额外消耗的营养值（正值=减少）
+    apply_states: dict[str, float] = field(default_factory=dict)  # 激活时一次性状态修正，移除时还原
 
 
 @dataclass
@@ -50,6 +53,8 @@ class LifeProfile:
     state_max: dict[str, float] = field(default_factory=dict)
     state_min: dict[str, float] = field(default_factory=dict)
     nutrition: dict[str, float] = field(default_factory=dict)
+    nutrition_max: dict[str, float] = field(default_factory=dict)
+    nutrition_min: dict[str, float] = field(default_factory=dict)
     attrs: dict[str, float] = field(default_factory=dict)
     inventory: dict[str, int] = field(default_factory=dict)
     active_effects: list[LifeEffect] = field(default_factory=list)
@@ -142,8 +147,8 @@ class LifeSystem:
         self._death_summary: dict[str, Any] | None = None
         self._life_started_at: float = time.time()
 
-        self.state_definitions: dict[str, dict[str, Any]] = self._load_state_definitions()
-        self.nutrition_definitions: dict[str, dict[str, Any]] = self._load_nutrition_definitions()
+        self.state_definitions, _state_init_issues = self._load_state_definitions()
+        self.nutrition_definitions, _nutrition_init_issues = self._load_nutrition_definitions()
         self.attr_definitions: dict[str, dict[str, Any]] = self._load_attr_definitions()
         self._load_level_config()
 
@@ -208,12 +213,14 @@ class LifeSystem:
         state_max = {key: float(defn["max"]) for key, defn in self.state_definitions.items()}
         state_min = {key: float(defn["min"]) for key, defn in self.state_definitions.items()}
         nutrition = {key: float(defn["default"]) for key, defn in self.nutrition_definitions.items()}
+        nutrition_max = {key: float(defn.get("max", 100.0)) for key, defn in self.nutrition_definitions.items()}
+        nutrition_min = {key: float(defn.get("min", 0.0)) for key, defn in self.nutrition_definitions.items()}
         attrs: dict[str, float] = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {}
         attr_exp: dict[str, float] = {k: 0.0 for k in self.attr_definitions.keys()}
         attr_level: dict[str, int] = {k: 0 for k in self.attr_definitions.keys()}
         attr_base: dict[str, float] = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {}
         inventory = self._load_starter_inventory()
-        return LifeProfile(states=states, state_max=state_max, state_min=state_min, nutrition=nutrition, attrs=attrs, inventory=inventory, attr_exp=attr_exp, attr_level=attr_level, attr_base=attr_base)
+        return LifeProfile(states=states, state_max=state_max, state_min=state_min, nutrition=nutrition, nutrition_max=nutrition_max, nutrition_min=nutrition_min, attrs=attrs, inventory=inventory, attr_exp=attr_exp, attr_level=attr_level, attr_base=attr_base)
 
     def _load_starter_inventory(self) -> dict[str, int]:
         result: dict[str, int] = {}
@@ -239,8 +246,8 @@ class LifeSystem:
 
     def reload_registries(self) -> None:
         _log.INFO("[Life][Register]开始重载注册表")
-        next_state_defs = self._load_state_definitions()
-        next_nutrition_defs = self._load_nutrition_definitions()
+        next_state_defs, state_issues = self._load_state_definitions()
+        next_nutrition_defs, nutrition_issues = self._load_nutrition_definitions()
         next_attr_defs = self._load_attr_definitions()
         self._sync_profile_states(next_state_defs)
         self._sync_profile_nutrition(next_nutrition_defs)
@@ -270,7 +277,7 @@ class LifeSystem:
             self._iter_passive_buff_dirs()
         )
         self.tag_registry = self._load_tag_registry(self._iter_tag_dirs())
-        self.validation_issues = buff_issues + item_issues + trigger_issues + outcome_issues + passive_issues
+        self.validation_issues = state_issues + nutrition_issues + buff_issues + item_issues + trigger_issues + outcome_issues + passive_issues
         self.attribute_rules = self._load_attribute_rules(self.buff_registry)
         self._refresh_attr_range_effects()
         self._sync_managed_nutrition_buffs()
@@ -559,6 +566,7 @@ class LifeSystem:
         passive_buff_dir: str | Path | None = None,
         attr_dir: str | Path | None = None,
         level_dir: str | Path | None = None,
+        tag_dir: str | Path | None = None,
         reload: bool = True,
     ) -> None:
         changed = False
@@ -581,6 +589,8 @@ class LifeSystem:
         if level_dir is not None:
             if self._append_unique_path(self.extra_level_dirs, level_dir):
                 self.reload_level_config()
+        if tag_dir is not None:
+            changed = self._append_unique_path(self.extra_tag_dirs, tag_dir) or changed
         if changed and reload:
             self.reload_registries()
 
@@ -596,6 +606,7 @@ class LifeSystem:
         passive_buff_dir: str | Path | None = None,
         attr_dir: str | Path | None = None,
         level_dir: str | Path | None = None,
+        tag_dir: str | Path | None = None,
         reload: bool = True,
     ) -> None:
         changed = False
@@ -618,6 +629,8 @@ class LifeSystem:
         if level_dir is not None:
             if self._remove_path(self.extra_level_dirs, level_dir):
                 self.reload_level_config()
+        if tag_dir is not None:
+            changed = self._remove_path(self.extra_tag_dirs, tag_dir) or changed
         if changed and reload:
             self.reload_registries()
 
@@ -771,10 +784,11 @@ class LifeSystem:
             }
         return result
 
-    def _load_state_definitions(self) -> dict[str, dict[str, Any]]:
+    def _load_state_definitions(self) -> tuple[dict[str, dict[str, Any]], list[ValidationIssue]]:
         loaded: list[dict[str, Any]] = []
         scanned_dirs = 0
         scanned_files = 0
+        issues: list[ValidationIssue] = []
         for directory in self._iter_status_dirs():
             if not directory.exists():
                 continue
@@ -783,16 +797,20 @@ class LifeSystem:
                 scanned_files += 1
                 payload = self._read_json(file_path)
                 if isinstance(payload, dict) and "id" in payload:
+                    issues.extend(validate_state_record(payload, str(file_path)))
                     loaded.append(payload)
                 elif isinstance(payload, list):
-                    loaded.extend([r for r in payload if isinstance(r, dict)])
+                    for r in payload:
+                        if isinstance(r, dict):
+                            issues.extend(validate_state_record(r, str(file_path)))
+                            loaded.append(r)
 
         if not loaded:
             _log.WARN(
                 f"[Life][Register][Status]未发现状态定义，使用默认状态。"
                 f"dirs={scanned_dirs} files={scanned_files} default={len(BASE_STATES)}"
             )
-            return self._build_default_state_definitions()
+            return self._build_default_state_definitions(), issues
 
         normalized: list[dict[str, Any]] = []
         for index, record in enumerate(loaded):
@@ -853,7 +871,7 @@ class LifeSystem:
             )
 
         if not normalized:
-            return self._build_default_state_definitions()
+            return self._build_default_state_definitions(), issues
 
         normalized.sort(key=lambda item: (int(item.get("order", 0)), str(item.get("id", ""))))
         result: dict[str, dict[str, Any]] = {}
@@ -868,12 +886,13 @@ class LifeSystem:
             f"[Life][Register][Status]dirs={scanned_dirs} files={scanned_files} "
             f"records={len(result)} duplicates={duplicate_count}"
         )
-        return result
+        return result, issues
 
-    def _load_nutrition_definitions(self) -> dict[str, dict[str, Any]]:
+    def _load_nutrition_definitions(self) -> tuple[dict[str, dict[str, Any]], list[ValidationIssue]]:
         loaded: list[dict[str, Any]] = []
         scanned_dirs = 0
         scanned_files = 0
+        issues: list[ValidationIssue] = []
         for directory in self._iter_nutrition_dirs():
             if not directory.exists():
                 continue
@@ -882,9 +901,13 @@ class LifeSystem:
                 scanned_files += 1
                 payload = self._read_json(file_path)
                 if isinstance(payload, dict) and "id" in payload:
+                    issues.extend(validate_nutrition_record(payload, str(file_path)))
                     loaded.append(payload)
                 elif isinstance(payload, list):
-                    loaded.extend([r for r in payload if isinstance(r, dict)])
+                    for r in payload:
+                        if isinstance(r, dict):
+                            issues.extend(validate_nutrition_record(r, str(file_path)))
+                            loaded.append(r)
 
         normalized: list[dict[str, Any]] = []
         for index, record in enumerate(loaded):
@@ -959,7 +982,7 @@ class LifeSystem:
             f"[Life][Register][Nutrition]dirs={scanned_dirs} files={scanned_files} "
             f"records={len(result)} duplicates={duplicate_count}"
         )
-        return result
+        return result, issues
 
     def _sync_profile_states(self, next_state_defs: dict[str, dict[str, Any]]) -> None:
         old_states = dict(self.profile.states)
@@ -1030,7 +1053,7 @@ class LifeSystem:
         for record in buff_registry.values():
             attr_name = str(record.get("attribute", "")).strip()
             status_rules = record.get("status")
-            if attr_name not in BASE_ATTRS or not isinstance(status_rules, list):
+            if not attr_name or not isinstance(status_rules, list):
                 continue
 
             parsed: list[dict[str, Any]] = []
@@ -1109,6 +1132,9 @@ class LifeSystem:
                     if record_id in result:
                         duplicate_count += 1
                         _log.WARN(f"[Life][Register][{kind}]重复ID，后者覆盖前者: {record_id} file={file_path}")
+                        existing = result[record_id]
+                        existing.update(record)
+                        record = existing
                     result[record_id] = record
 
         _log.INFO(
@@ -1847,6 +1873,7 @@ class LifeSystem:
             "id": effect_id,
             "name": self._resolve_record_name(buff, effect_id),
             "desc": self._resolve_record_desc(buff),
+            "icon_base64": buff.get("icon_base64"),
             "raw": dict(buff),
         }
 
@@ -1908,14 +1935,27 @@ class LifeSystem:
 
         self._clear_buffs_from_record(record)
 
+        # Instant attr effects (tracked in attr_modifiers for revert on buff end).
+        apply_attrs: dict[str, float] = {}
         for attr in BASE_ATTRS:
             if attr in record:
-                self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) + float(record[attr])
+                try:
+                    delta = float(record[attr])
+                    apply_attrs[attr] = delta
+                    self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) + delta
+                except Exception:
+                    pass
 
-        # Instant state effects.
+        # Instant state effects (tracked in apply_states for revert on buff end).
+        apply_states: dict[str, float] = {}
         for state in self.state_keys:
             if state in record:
-                self._change_state(state, float(record[state]))
+                try:
+                    delta = float(record[state])
+                    apply_states[state] = delta
+                    self._change_state(state, delta)
+                except Exception:
+                    pass
 
         self._apply_nutrition_record(record)
 
@@ -1962,12 +2002,12 @@ class LifeSystem:
                     pass
 
         if duration_override is not None:
-            if per_tick or cap_modifiers or nutrition_per_tick:
+            if per_tick or apply_states or apply_attrs or cap_modifiers or nutrition_per_tick:
                 duration_ticks = max(1, int(duration_override))
             elif duration_ticks > 0:
                 duration_ticks = max(1, int(duration_override))
 
-        if (per_tick or cap_modifiers or nutrition_per_tick) and duration_ticks > 0:
+        if (per_tick or apply_states or apply_attrs or cap_modifiers or nutrition_per_tick) and duration_ticks > 0:
             self._register_effect(
                 LifeEffect(
                     effect_id=record_id,
@@ -1979,9 +2019,11 @@ class LifeSystem:
                     stack_rule=stack_rule,
                     cap_modifiers=cap_modifiers,
                     nutrition_per_tick=nutrition_per_tick,
+                    apply_states=apply_states,
+                    attr_modifiers=apply_attrs,
                 )
             )
-        elif cap_modifiers:
+        elif cap_modifiers or apply_attrs or apply_states:
             self._apply_cap_modifiers(cap_modifiers)
         elif any(str(t.get("buff_id") or "") == record_id for t in self.tag_registry.values()):
             # 标签监控的 buff：无定时效果，以 managed 模式注册为标记效果
@@ -1995,6 +2037,7 @@ class LifeSystem:
                     remaining_ticks=1,
                     stack_rule="noadd",
                     managed=True,
+                    apply_states=apply_states,
                 )
             )
 
@@ -2034,15 +2077,15 @@ class LifeSystem:
         for key, value in record.items():
             if key.endswith("_max2"):
                 base = key[:-5]
-                if base in self.state_keys:
+                if base in self.state_keys or base in self.nutrition_keys:
                     modifiers.append(("max2", base, value))
             elif key.endswith("_max"):
                 base = key[:-4]
-                if base in self.state_keys:
+                if base in self.state_keys or base in self.nutrition_keys:
                     modifiers.append(("max", base, value))
             elif key.endswith("_min"):
                 base = key[:-4]
-                if base in self.state_keys:
+                if base in self.state_keys or base in self.nutrition_keys:
                     modifiers.append(("min", base, value))
         return modifiers
 
@@ -2298,6 +2341,10 @@ class LifeSystem:
             state: float(self.state_definitions.get(state, {}).get("max", GLOBAL_VALUE_MAX)) for state in self.state_keys
         }
         min_caps = {state: float(self.state_definitions.get(state, {}).get("min", 0.0)) for state in self.state_keys}
+        for n_key in self.nutrition_keys:
+            defn = self.nutrition_definitions.get(n_key, {})
+            max_caps[n_key] = float(defn.get("max", 100.0))
+            min_caps[n_key] = float(defn.get("min", 0.0))
 
         breakdown: dict[str, dict[str, float]] = {
             state: {
@@ -2315,6 +2362,20 @@ class LifeSystem:
             }
             for state in self.state_keys
         }
+        for n_key in self.nutrition_keys:
+            breakdown[n_key] = {
+                "max_flat_delta": 0.0,
+                "min_flat_delta": 0.0,
+                "max_fixed_delta": 0.0,
+                "min_fixed_delta": 0.0,
+                "max_percent_value_delta": 0.0,
+                "min_percent_value_delta": 0.0,
+                "max_percent_add": 0.0,
+                "max_percent_sub": 0.0,
+                "min_percent_add": 0.0,
+                "min_percent_sub": 0.0,
+                "tick_delta": 0.0,
+            }
 
         def _record_percent(state: str, mode: str, raw_value: Any) -> None:
             percent = self._parse_percent_value(raw_value)
@@ -2339,46 +2400,50 @@ class LifeSystem:
                 before = max_caps[state]
                 delta = self._to_delta(raw_value, before)
                 max_caps[state] = before + delta
-                breakdown[state]["max_flat_delta"] += delta
-                percent = self._parse_percent_value(raw_value)
-                if percent is None:
-                    breakdown[state]["max_fixed_delta"] += delta
-                else:
-                    breakdown[state]["max_percent_value_delta"] += delta
-                _record_percent(state, mode, raw_value)
+                if state in breakdown:
+                    breakdown[state]["max_flat_delta"] += delta
+                    percent = self._parse_percent_value(raw_value)
+                    if percent is None:
+                        breakdown[state]["max_fixed_delta"] += delta
+                    else:
+                        breakdown[state]["max_percent_value_delta"] += delta
+                    _record_percent(state, mode, raw_value)
                 return
 
             if mode == "min":
                 before = min_caps[state]
                 delta = self._to_delta(raw_value, before)
                 min_caps[state] = before + delta
-                breakdown[state]["min_flat_delta"] += delta
-                percent = self._parse_percent_value(raw_value)
-                if percent is None:
-                    breakdown[state]["min_fixed_delta"] += delta
-                else:
-                    breakdown[state]["min_percent_value_delta"] += delta
-                _record_percent(state, mode, raw_value)
+                if state in breakdown:
+                    breakdown[state]["min_flat_delta"] += delta
+                    percent = self._parse_percent_value(raw_value)
+                    if percent is None:
+                        breakdown[state]["min_fixed_delta"] += delta
+                    else:
+                        breakdown[state]["min_percent_value_delta"] += delta
+                    _record_percent(state, mode, raw_value)
                 return
 
             if mode == "max2":
                 before = max_caps[state]
                 max_caps[state] = before * self._to_multiplier(raw_value)
-                delta = max_caps[state] - before
-                breakdown[state]["max_flat_delta"] += delta
-                breakdown[state]["max_percent_value_delta"] += delta
+                if state in breakdown:
+                    delta = max_caps[state] - before
+                    breakdown[state]["max_flat_delta"] += delta
+                    breakdown[state]["max_percent_value_delta"] += delta
 
-                percent = self._parse_percent_value(raw_value)
-                if percent is None:
-                    try:
-                        percent = (self._to_multiplier(raw_value) - 1.0) * 100.0
-                    except Exception:
-                        percent = None
-                if percent is not None:
-                    if percent >= 0:
-                        breakdown[state]["max_percent_add"] += percent
-                    else:
-                        breakdown[state]["max_percent_sub"] += percent
+                    percent = self._parse_percent_value(raw_value)
+                    if percent is None:
+                        try:
+                            percent = (self._to_multiplier(raw_value) - 1.0) * 100.0
+                        except Exception:
+                            percent = None
+                    if percent is not None:
+                        if percent >= 0:
+                            breakdown[state]["max_percent_add"] += percent
+                        else:
+                            breakdown[state]["max_percent_sub"] += percent
+                return
 
         for mode, state, raw_value in self._static_cap_modifiers:
             _apply_one_modifier(mode, state, raw_value)
@@ -2436,10 +2501,27 @@ class LifeSystem:
             self.profile.state_max[state] = max_caps[state]
             self._clamp_state(state)
 
+        for n_key in self.nutrition_keys:
+            if min_caps[n_key] > max_caps[n_key]:
+                min_caps[n_key] = max_caps[n_key]
+            self.profile.nutrition_min[n_key] = min_caps[n_key]
+            self.profile.nutrition_max[n_key] = max_caps[n_key]
+            self._clamp_nutrition(n_key)
+
         tick_deltas = self._collect_state_tick_deltas()
         for state, delta in tick_deltas.items():
             if state in breakdown:
                 breakdown[state]["tick_delta"] = float(delta)
+
+        # 收集营养值的每 tick 变化量（衰减 + 效果修正）
+        for n_key in self.nutrition_keys:
+            defn = self.nutrition_definitions.get(n_key, {})
+            decay = float(defn.get("decay", 0.0))
+            effect_delta = 0.0
+            for effect in self.profile.active_effects:
+                effect_delta += effect.nutrition_per_tick.get(n_key, 0.0)
+            breakdown[n_key]["tick_delta"] = -decay + effect_delta
+
         self._state_runtime_breakdown = breakdown
 
     def _trigger_death(self) -> None:
@@ -2746,6 +2828,17 @@ class LifeSystem:
         for attr, delta in attr_modifiers.items():
             self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) + delta
 
+        # 一次性状态修正（直接匹配状态键名，非 {state}s 格式）
+        apply_states: dict[str, float] = {}
+        for state_key in self.state_keys:
+            if state_key in record:
+                try:
+                    apply_states[state_key] = float(record[state_key])
+                except Exception:
+                    pass
+        for state, delta in apply_states.items():
+            self.profile.states[state] = self.profile.states.get(state, 0.0) + delta
+
         nutrition_per_tick: dict[str, float] = {}
         for n_key in self.nutrition_keys:
             value_key = f"{n_key}s"
@@ -2767,18 +2860,24 @@ class LifeSystem:
             attr_modifiers=attr_modifiers,
             managed=True,
             nutrition_per_tick=nutrition_per_tick,
+            apply_states=apply_states,
         )
         self.profile.active_effects.append(effect)
+        state_info = f" states={effect.apply_states}" if effect.apply_states else ""
         attr_info = f" attrs={effect.attr_modifiers}" if effect.attr_modifiers else ""
-        _log.DEBUG(f"[Life]激活持续Buff: {record_id} (来源: {source}){attr_info}")
+        _log.DEBUG(f"[Life]激活持续Buff: {record_id} (来源: {source}){attr_info}{state_info}")
 
     def _revert_effect_attr_modifiers(self, effect: LifeEffect) -> None:
-        if not effect.attr_modifiers:
-            return
-        for attr, delta in effect.attr_modifiers.items():
-            if attr not in self.profile.attrs:
-                continue
-            self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) - float(delta)
+        if effect.attr_modifiers:
+            for attr, delta in effect.attr_modifiers.items():
+                if attr not in self.profile.attrs:
+                    continue
+                self.profile.attrs[attr] = self.profile.attrs.get(attr, 0.0) - float(delta)
+        if effect.apply_states:
+            for state, delta in effect.apply_states.items():
+                if state not in self.profile.states:
+                    continue
+                self.profile.states[state] = self.profile.states.get(state, 0.0) - float(delta)
 
     def _change_nutrition(self, nutrition_key: str, delta: float) -> None:
         if nutrition_key not in self.profile.nutrition:
@@ -2787,11 +2886,10 @@ class LifeSystem:
         self._clamp_nutrition(nutrition_key)
 
     def _clamp_nutrition(self, nutrition_key: str) -> None:
-        definition = self.nutrition_definitions.get(nutrition_key)
-        if not definition:
+        if nutrition_key not in self.profile.nutrition:
             return
-        lo = float(definition.get("min", 0.0))
-        hi = float(definition.get("max", 100.0))
+        lo = self.profile.nutrition_min.get(nutrition_key, 0.0)
+        hi = self.profile.nutrition_max.get(nutrition_key, 100.0)
         self.profile.nutrition[nutrition_key] = max(lo, min(hi, self.profile.nutrition[nutrition_key]))
 
     def get_nutrition_snapshot(self) -> list[dict[str, Any]]:
@@ -2809,15 +2907,48 @@ class LifeSystem:
             )
             decay = float(definition.get("decay", 0.0))
             effect_delta = effect_nutrition_deltas.get(nutrition_key, 0.0)
+            base_max = float(definition.get("max", 100.0))
+            base_min = float(definition.get("min", 0.0))
+            current_max = float(self.profile.nutrition_max.get(nutrition_key, base_max))
+            current_min = float(self.profile.nutrition_min.get(nutrition_key, base_min))
+
+            detail = self._state_runtime_breakdown.get(nutrition_key, {})
+            max_flat_delta = float(detail.get("max_flat_delta", current_max - base_max))
+            min_flat_delta = float(detail.get("min_flat_delta", current_min - base_min))
+            max_fixed_delta = float(detail.get("max_fixed_delta", max_flat_delta))
+            min_fixed_delta = float(detail.get("min_fixed_delta", min_flat_delta))
+            max_percent_value_delta = float(detail.get("max_percent_value_delta", max_flat_delta - max_fixed_delta))
+            min_percent_value_delta = float(detail.get("min_percent_value_delta", min_flat_delta - min_fixed_delta))
+            max_percent_add = float(detail.get("max_percent_add", 0.0))
+            max_percent_sub = float(detail.get("max_percent_sub", 0.0))
+            min_percent_add = float(detail.get("min_percent_add", 0.0))
+            min_percent_sub = float(detail.get("min_percent_sub", 0.0))
+            tick_delta = float(detail.get("tick_delta", -decay + effect_delta))
+
             snapshot.append(
                 {
                     "id": nutrition_key,
                     "name": nutrition_name,
                     "value": float(self.profile.nutrition.get(nutrition_key, definition.get("default", 0.0))),
-                    "min": float(definition.get("min", 0.0)),
-                    "max": float(definition.get("max", 100.0)),
+                    "base_min": base_min,
+                    "base_max": base_max,
+                    "min": current_min,
+                    "max": current_max,
+                    "overflow": max(0.0, current_max - base_max),
+                    "max_flat_delta": max_flat_delta,
+                    "min_flat_delta": min_flat_delta,
+                    "max_fixed_delta": max_fixed_delta,
+                    "min_fixed_delta": min_fixed_delta,
+                    "max_percent_value_delta": max_percent_value_delta,
+                    "min_percent_value_delta": min_percent_value_delta,
+                    "max_percent_add": max_percent_add,
+                    "max_percent_sub": max_percent_sub,
+                    "min_percent_add": min_percent_add,
+                    "min_percent_sub": min_percent_sub,
+                    "max_percent_net": max_percent_add + max_percent_sub,
+                    "min_percent_net": min_percent_add + min_percent_sub,
                     "decay": decay,
-                    "tick_delta": -decay + effect_delta,
+                    "tick_delta": tick_delta,
                 }
             )
         return snapshot
@@ -3724,6 +3855,19 @@ class LifeSystem:
         payload["desc"] = self._resolve_record_desc(outcome)
         return payload
 
+    def list_event_trigger_ids(self) -> list[str]:
+        return sorted(self.event_trigger_registry.keys())
+
+    def list_event_outcome_ids(self) -> list[str]:
+        return sorted(self.event_outcome_registry.keys())
+
+    def fire_outcome(self, outcome_id: str) -> bool:
+        outcome = self.event_outcome_registry.get(outcome_id)
+        if not outcome:
+            return False
+        self._execute_outcome(outcome_id, [], 0)
+        return True
+
     def _clamp_state(self, state: str) -> None:
         lo = self.profile.state_min.get(state, 0.0)
         hi = self.profile.state_max.get(state, 100.0)
@@ -3783,6 +3927,7 @@ class LifeSystem:
                     "stack_rule": e.stack_rule,
                     "cap_modifiers": e.cap_modifiers,
                     "attr_modifiers": e.attr_modifiers,
+                    "apply_states": e.apply_states,
                 }
                 for e in self.profile.active_effects
             ],
@@ -3899,6 +4044,7 @@ class LifeSystem:
                         if isinstance(entry, (list, tuple)) and len(entry) == 3
                     ],
                     attr_modifiers={k: float(v) for k, v in dict(raw.get("attr_modifiers", {})).items()},
+                    apply_states={k: float(v) for k, v in dict(raw.get("apply_states", {})).items()},
                 )
             )
 
@@ -3906,6 +4052,16 @@ class LifeSystem:
             self._clamp_state(state)
         for nutrition_key in self.nutrition_keys:
             self._clamp_nutrition(nutrition_key)
+        self._refresh_attr_range_effects()
+
+        # 移除从存档恢复的 managed effects（来源为 nutrition: 或 state:），
+        # 由 sync 方法从当前 buff_registry 重建，确保新的 cap_modifiers 被正确提取
+        self.profile.active_effects = [
+            e for e in self.profile.active_effects
+            if not e.source.startswith("nutrition:") and not e.source.startswith("state:")
+        ]
+        self._sync_managed_nutrition_buffs()
+        self._sync_managed_state_buffs()
         self._refresh_attr_range_effects()
 
         now = time.time()
@@ -3986,6 +4142,8 @@ class LifeSystem:
         self._life_started_at = time.time()
         self.profile = self._create_default_profile()
         self._sync_managed_nutrition_buffs()
+        self._sync_managed_state_buffs()
+        self._refresh_attr_range_effects()
         self.save("default")
         _log.INFO("[Life]养成数据已重置")
 

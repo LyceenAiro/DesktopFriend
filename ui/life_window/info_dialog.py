@@ -6,17 +6,19 @@ from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
 from ui.life_window.common import attach_window_shadow
 from ui.styles.css import BOTTOM_BAR_STYLE, DIVIDER_STYLE, TOP_BAR_STYLE, WINDOW_SHELL_STYLE
 from ui.styles.dialog_theme import apply_adobe_dialog_theme, apply_frameless_window_theme
+from util.buff_icon_manager import BuffIconManager
 from util.i18n import tr
 
 
 class LifeInfoDialog(QDialog):
-    def __init__(self, entry_name: str, desc: str, debug_lines: list[str] | None = None, parent=None):
+    def __init__(self, entry_name: str, desc: str, debug_lines: list[str] | None = None, icon_base64: str | None = None, parent=None):
         super().__init__(parent)
         self._dragging = False
         self._drag_start = None
 
         self.setWindowTitle(entry_name)
-        self.setModal(True)
+        self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self.resize(500, 300)
         self.setWindowFlags((self.windowFlags() & ~Qt.Tool) | Qt.Window | Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, False)
@@ -42,6 +44,15 @@ class LifeInfoDialog(QDialog):
         top_row = QHBoxLayout(self.top_bar)
         top_row.setContentsMargins(20, 10, 14, 10)
         top_row.setSpacing(8)
+
+        if icon_base64:
+            icon_pixmap = BuffIconManager.base64_to_pixmap(icon_base64, 40)
+            if icon_pixmap:
+                icon_label = QLabel()
+                icon_label.setPixmap(icon_pixmap)
+                icon_label.setFixedSize(40, 40)
+                icon_label.setStyleSheet("background: transparent; border: none;")
+                top_row.addWidget(icon_label)
 
         self.title_label = QLabel(entry_name)
         self.title_label.setObjectName("title")

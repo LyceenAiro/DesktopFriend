@@ -33,7 +33,8 @@ class CollectionDetailDialog(QDialog):
         self._developer_mode = developer_mode
 
         self.setWindowTitle(category_name)
-        self.setModal(True)
+        self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self.resize(660, 480)
         self.setWindowFlags((self.windowFlags() & ~Qt.Tool) | Qt.Window | Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, False)
@@ -236,13 +237,10 @@ class CollectionDetailDialog(QDialog):
             return
         name = str(detail.get("name", entry_id))
         desc = str(detail.get("desc", "")).strip()
-        dialog = LifeInfoDialog(name, desc, parent=self)
-        dialog.exec()
+        dialog = LifeInfoDialog(name, desc, icon_base64=detail.get("icon_base64"), parent=self)
+        dialog.show()
 
     def event(self, event):
-        if event.type() == QEvent.WindowDeactivate and self.isVisible():
-            self.reject()
-            return True
         return super().event(event)
 
     def eventFilter(self, watched, event):

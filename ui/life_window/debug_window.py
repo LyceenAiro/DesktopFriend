@@ -205,6 +205,7 @@ class LifeDebugWindow(QDialog):
             tr("life.debug.tabs.items"): self._build_items_tab(),
             tr("life.debug.tabs.values"): self._build_values_tab(),
             tr("life.debug.tabs.exp"): self._build_exp_tab(),
+            tr("life.debug.tabs.events"): self._build_events_tab(),
         }
 
         for tab_name in self.tab_widgets.keys():
@@ -495,6 +496,61 @@ class LifeDebugWindow(QDialog):
         layout.addStretch()
         return root
 
+    def _build_events_tab(self) -> QFrame:
+        root = QFrame()
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(12)
+
+        trigger_card = create_section_card(
+            tr("life.debug.events.trigger_card_title"),
+            tr("life.debug.events.trigger_card_desc"),
+        )
+        trigger_layout = trigger_card.layout()
+
+        trigger_row = QHBoxLayout()
+        trigger_row.setSpacing(8)
+
+        self.event_trigger_combo = QComboBox()
+        self.event_trigger_combo.setEditable(True)
+        self.event_trigger_combo.setMinimumWidth(240)
+        trigger_row.addWidget(self.event_trigger_combo)
+
+        fire_trigger_btn = QPushButton(tr("life.debug.events.fire_trigger"))
+        fire_trigger_btn.clicked.connect(self._fire_selected_trigger)
+        trigger_row.addWidget(fire_trigger_btn)
+
+        refresh_trigger_btn = QPushButton(tr("settings.debug.life_refresh"))
+        refresh_trigger_btn.clicked.connect(self._reload_event_selectors)
+        trigger_row.addWidget(refresh_trigger_btn)
+        trigger_row.addStretch()
+        trigger_layout.addLayout(trigger_row)
+        layout.addWidget(trigger_card)
+
+        outcome_card = create_section_card(
+            tr("life.debug.events.outcome_card_title"),
+            tr("life.debug.events.outcome_card_desc"),
+        )
+        outcome_layout = outcome_card.layout()
+
+        outcome_row = QHBoxLayout()
+        outcome_row.setSpacing(8)
+
+        self.event_outcome_combo = QComboBox()
+        self.event_outcome_combo.setEditable(True)
+        self.event_outcome_combo.setMinimumWidth(240)
+        outcome_row.addWidget(self.event_outcome_combo)
+
+        fire_outcome_btn = QPushButton(tr("life.debug.events.fire_outcome"))
+        fire_outcome_btn.clicked.connect(self._fire_selected_outcome)
+        outcome_row.addWidget(fire_outcome_btn)
+        outcome_row.addStretch()
+        outcome_layout.addLayout(outcome_row)
+        layout.addWidget(outcome_card)
+
+        layout.addStretch()
+        return root
+
     def switch_tab(self, tab_name: str) -> None:
         for name, btn in self.tab_buttons.items():
             btn.setStyleSheet(NAV_BUTTON_ACTIVE_STYLE if name == tab_name else NAV_BUTTON_STYLE)
@@ -715,6 +771,7 @@ class LifeDebugWindow(QDialog):
         self._reload_effect_selectors()
         self._reload_item_selectors()
         self._reload_value_selectors()
+        self._reload_event_selectors()
         self._set_feedback(tr("life.debug.reload_done", "已重载注册表"), "success")
         self.refresh_view()
 
@@ -800,6 +857,7 @@ class LifeDebugWindow(QDialog):
         self._reload_effect_selectors(force=not from_timer)
         self._reload_item_selectors(force=not from_timer)
         self._reload_value_selectors(force=(not from_timer) and (not value_editor_busy))
+        self._reload_event_selectors(force=not from_timer)
 
         # EXP tab 不参与自动刷新，只在切换进入时同步一次
         scroll = self.state_text.verticalScrollBar()
@@ -910,6 +968,68 @@ class LifeDebugWindow(QDialog):
         exp = float(self.debug_exp_spin.value())
         self.life.set_exp(exp)
         self._set_feedback(f"EXP = {self.life.profile.exp:.1f}", "success")
+        self.refresh_view()
+
+    def _reload_event_selectors(self, force: bool = False):
+        current_trigger = str(self.event_trigger_combo.currentText()).strip() if hasattr(self, "event_trigger_combo") else ""
+        current_outcome = str(self.event_outcome_combo.currentText()).strip() if hasattr(self, "event_outcome_combo") else ""
+        next_trigger_ids = self.life.list_event_trigger_ids()
+        next_outcome_ids = self.life.list_event_outcome_ids()
+
+        if not force:
+            current_trigger_ids = [self.event_trigger_combo.itemText(i) for i in range(self.event_trigger_combo.count())]
+            current_outcome_ids = [self.event_outcome_combo.itemText(i) for i in range(self.event_outcome_combo.count())]
+            if current_trigger_ids == next_trigger_ids and current_outcome_ids == next_outcome_ids:
+                return
+
+        self.event_trigger_combo.clear()
+        self.event_trigger_combo.addItems(next_trigger_ids)
+        if current_trigger:
+            self.event_trigger_combo.setCurrentText(current_trigger)
+
+        self.event_outcome_combo.clear()
+        self.event_outcome_combo.addItems(next_outcome_ids)
+        if current_outcome:
+            self.event_outcome_combo.setCurrentText(current_outcome)
+
+    def _fire_selected_trigger(self):
+        trigger_id = str(self.event_trigger_combo.currentText()).strip()
+        if not trigger_id:
+            self._set_feedback(tr("life.debug.events.empty"), "error")
+            return
+        result = self.life.fire_trigger(trigger_id)
+        if result is None:
+            self._set_feedback(
+                tr("life.debug.events.trigger_failed", trigger=trigger_id),
+                "error",
+            )
+        elif result.get("pending"):
+            self._set_feedback(
+                tr("life.debug.events.trigger_pending", trigger=trigger_id),
+                "info",
+            )
+        else:
+            self._set_feedback(
+                tr("life.debug.events.trigger_ok", trigger=trigger_id),
+                "success",
+            )
+        self.refresh_view()
+
+    def _fire_selected_outcome(self):
+        outcome_id = str(self.event_outcome_combo.currentText()).strip()
+        if not outcome_id:
+            self._set_feedback(tr("life.debug.events.empty"), "error")
+            return
+        if self.life.fire_outcome(outcome_id):
+            self._set_feedback(
+                tr("life.debug.events.outcome_ok", outcome=outcome_id),
+                "success",
+            )
+        else:
+            self._set_feedback(
+                tr("life.debug.events.outcome_failed", outcome=outcome_id),
+                "error",
+            )
         self.refresh_view()
 
     def resizeEvent(self, event):

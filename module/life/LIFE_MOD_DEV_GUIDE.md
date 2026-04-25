@@ -1027,6 +1027,7 @@ mod/my_mod/
 | `passive_buff/` | 挂机随机 buff 触发器 |
 | `attrs/` | 属性定义 |
 | `level/` | 全局等级配置（`level_setting.json`，0.3） |
+| `tags/` | 标签定义 |
 
 ### 可扩展（非目录约定、需要钩子）
 
@@ -1038,7 +1039,7 @@ mod/my_mod/
 
 ### 不支持 mod 覆盖的目录
 
-- `tags/`：标签注册仅由基础模块提供。
+（暂无）
 
 ---
 

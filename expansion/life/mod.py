@@ -214,8 +214,12 @@ class LifeModRegistry:
 
         return issues
 
-    def _read_user_order(self) -> list[str]:
-        """读取 load_order.json 中用户自定义的 mod 顺序。"""
+    def _read_user_order(self) -> tuple[list[str], set[str]]:
+        """读取 load_order.json 中用户自定义的 mod 顺序和禁用列表。
+
+        Returns:
+            (order, disabled_mods) 其中 order 为加载顺序，disabled_mods 为禁用的 mod id 集合。
+        """
         order_file = self.mod_root / "load_order.json"
         try:
             if order_file.exists():
@@ -223,10 +227,16 @@ class LifeModRegistry:
                 if isinstance(data, dict):
                     raw = data.get("order", [])
                     if isinstance(raw, list):
-                        return [str(x).strip() for x in raw if str(x).strip()]
+                        order = [str(x).strip() for x in raw if str(x).strip()]
+                    disabled_raw = data.get("disabled_mods", [])
+                    if isinstance(disabled_raw, list):
+                        disabled = {str(x).strip() for x in disabled_raw if str(x).strip()}
+                    else:
+                        disabled = set()
+                    return order, disabled
         except Exception:
             pass
-        return []
+        return [], set()
 
     def resolve_load_order(self) -> tuple[list[str], dict[str, list[str]]]:
         """Return deterministic mod load order and issues.
@@ -244,8 +254,25 @@ class LifeModRegistry:
         issues = self.validate()
         info_map, _, _, _ = self._collect_mods()
 
-        # Collect all mod ids that must be skipped, propagating transitively.
-        skip_set: set[str] = set(issues.keys())
+        # 读取用户自定义的禁用列表，将其加入 skip_set
+        _, disabled_mods = self._read_user_order()
+        # 清除已不存在的 mod 的禁用记录，避免误计入 log
+        stale = disabled_mods - info_map.keys()
+        if stale:
+            disabled_mods -= stale
+            _log.DEBUG(f"[Mod]清理 load_order.json 中已移除 mod 的禁用记录: {sorted(stale)}")
+            try:
+                order_file = self.mod_root / "load_order.json"
+                if order_file.exists():
+                    data = json.loads(order_file.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        raw_disabled = data.get("disabled_mods", [])
+                        if isinstance(raw_disabled, list):
+                            data["disabled_mods"] = [x for x in raw_disabled if str(x).strip() not in stale]
+                            order_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        skip_set: set[str] = set(issues.keys()) | disabled_mods
         changed = True
         while changed:
             changed = False
@@ -260,8 +287,11 @@ class LifeModRegistry:
                     skip_set.add(mod_id)
                     changed = True
 
-        # Log every skipped mod.
+        # Log skipped mods. Intentionally disabled mods are logged at INFO level.
         for mod_id in skip_set:
+            if mod_id in disabled_mods and mod_id not in issues:
+                _log.INFO(f"[Mod]跳过 {mod_id}: 已禁用")
+                continue
             for reason in issues.get(mod_id, ["未知原因"]):
                 _log.WARN(f"[Mod]跳过 {mod_id}: {reason}")
 
@@ -271,7 +301,7 @@ class LifeModRegistry:
             return [], issues
 
         # 读取用户自定义顺序，用于同层节点的 tie-breaking
-        user_order = self._read_user_order()
+        user_order, _ = self._read_user_order()
         _max_pos = len(user_order)
 
         def _sort_key(mod_id: str) -> tuple[int, str]:
@@ -426,6 +456,9 @@ class LifeModRegistry:
         level_dir = mod_dir / "level"
         if level_dir.exists():
             result["level_dir"] = level_dir
+        tag_dir = mod_dir / "tags"
+        if tag_dir.exists():
+            result["tag_dir"] = tag_dir
         return result
 
     def execute_with_builtin_loader(
@@ -461,7 +494,7 @@ class LifeModRegistry:
                 life_resource_dirs = {
                     k: v
                     for k, v in resource_dirs.items()
-                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir"}
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir", "tag_dir"}
                 }
                 if life_resource_dirs:
                     life_system.attach_mod_resource_dirs(reload=False, **life_resource_dirs)
@@ -504,7 +537,7 @@ class LifeModRegistry:
                 life_resource_dirs = {
                     k: v
                     for k, v in resource_dirs.items()
-                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir"}
+                    if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir", "tag_dir"}
                 }
                 if life_resource_dirs:
                     life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)
@@ -551,7 +584,7 @@ class LifeModRegistry:
                     life_resource_dirs = {
                         k: v
                         for k, v in resource_dirs.items()
-                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir"}
+                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir", "tag_dir"}
                     }
                     if life_resource_dirs:
                         life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)
