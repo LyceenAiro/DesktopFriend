@@ -46,7 +46,7 @@ DEFAULT_CONFIGS = {
         "life_afk_timeout_s": 3600,
     },
     "life": {
-        "life_enabled": False,
+        "life_enabled": True,
     },
     "mods": {
         "disabled_mods": [],
