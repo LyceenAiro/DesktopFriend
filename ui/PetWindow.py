@@ -87,6 +87,25 @@ class DesktopPet(QWidget):
         _log.INFO(f"如果发现有任何问题均可在GitHub上提交issue或直接联系我")
         _log.INFO(f"该软件完全开源免费，禁止任何形式对此分支商用！")
 
+        # 初始化动作系统
+        self._init_action_system()
+
+    def _init_action_system(self):
+        """初始化 ActionSystem（延迟初始化以避免循环导入）。"""
+        from module.default.action import ActionSystem
+        from module.default.vanilla import register_vanilla_actions
+        from ui.PetArt import PetArtList
+
+        self.action_system = ActionSystem(
+            self,
+            default_interval_ms=self.default_action_interval,
+        )
+        register_vanilla_actions(self.action_system, PetArtList)
+        from pathlib import Path
+        action_dir = Path(__file__).resolve().parent.parent / "module" / "default" / "action"
+        n = self.action_system.scan_action_directory(str(action_dir), source="builtin")
+        _log.INFO(f"[Action]动作系统已初始化，已注册 {len(self.action_system.action_registry)} 个原版动作，从目录加载 {n} 个")
+
     # 屏幕最大X轴坐标
     def ScreenMaxX(self): return app.primaryScreen().size().width()
 
@@ -123,6 +142,12 @@ class DesktopPet(QWidget):
             return False
         if self.PetArt.movie() is not None and self.PetArt.movie().state() == QMovie.Running:
             return False
+        # 检查动作系统：若有独占/序列动作播放，暂停待机动画
+        if hasattr(self, 'action_system') and self.action_system is not None:
+            if not self.action_system._vanilla_idle_active:
+                return False
+            if self.action_system._active_exclusive is not None:
+                return False
         try:
             from Event.input.move import _walk
             if _walk.timer.isActive():

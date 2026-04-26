@@ -77,7 +77,7 @@ if __name__ == "__main__":
         ]
 
         from ui.ResourcePackSelector import ResourcePackSelector
-        selector = ResourcePackSelector(resource_pack_items)
+        selector = ResourcePackSelector(resource_pack_items, default_pack=default_pack)
         if selector.exec() != QDialog.DialogCode.Accepted:
             _log.INFO("用户取消资源包选择，程序退出")
             sys.exit(0)
@@ -86,11 +86,14 @@ if __name__ == "__main__":
         selected_pack = selector.selected_pack
         _log.INFO(f"已选择资源包: {selected_pack}")
 
+        # 始终记录上次选择的资源包
+        basic_config["default_resource_pack"] = selected_pack
         if selector.remember_as_default:
             basic_config["auto_load_resource_pack"] = True
-            basic_config["default_resource_pack"] = selected_pack
-            save_config("basic", basic_config)
-            _log.INFO(f"已设置默认资源包: {selected_pack}")
+        else:
+            basic_config["auto_load_resource_pack"] = False
+        save_config("basic", basic_config)
+        _log.INFO(f"已设置默认资源包: {selected_pack}")
 
     from ui.PetWindow import PetWindow, app
     from module.life.runtime import start_life_loop, configure_tick_intervals, load_mods

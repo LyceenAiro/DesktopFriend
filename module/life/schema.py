@@ -114,8 +114,7 @@ def validate_buff_record(
 
     if "id" not in record or not str(record.get("id", "")).strip():
         issues.append(ValidationIssue("error", "buff 缺少 id", source, record_id, "id"))
-    if "name" not in record or not str(record.get("name", "")).strip():
-        issues.append(ValidationIssue("warn", "buff 缺少 name", source, record_id, "name"))
+    # 不校验 name：允许 id 作为 name 的 fallback，mod 通过 id 覆写字段时不需要重复填写 name
 
     if "desc" in record and not isinstance(record["desc"], str):
         issues.append(ValidationIssue("error", "desc 必须是字符串", source, record_id, "desc"))
@@ -145,6 +144,10 @@ def validate_buff_record(
             "attribute",
             "status",
             "_classes",
+            "icon_base64",
+            "display_in_status_bar",
+            "action_id",
+            "auto_trigger_action",
             # 条件与标签系统（Phase 1）
             "consume_self",
             "requires_buff",
@@ -242,6 +245,7 @@ def validate_item_record(
             "category",
             "consumable",
             "_classes",
+            "action_id",
             # 条件与标签系统（Phase 1）
             "requires_buff",
             "requires_no_buff",
@@ -562,6 +566,7 @@ def validate_event_trigger_record(
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
         "icon_base64",
+        "action_id",
         "cooldown_s", "duration_s", "mutex", "guaranteed", "random_pools",
         "requires_item", "requires_no_item",
         "costs", "tags_mode", "mutex_by_tag",
@@ -611,6 +616,7 @@ def validate_event_outcome_record(
         "id", "name", "desc", "description",
         "name_i18n_key", "desc_i18n_key", "description_i18n_key",
         "icon_base64",
+        "action_id",
         "guaranteed", "random_pools", "effects", "permanent_attr_delta",
         # 等级/经验联动（Phase 4）
         "exp", "min_level", "clear_buffs",

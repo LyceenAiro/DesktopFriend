@@ -112,6 +112,16 @@ class LifeWindow(QDialog):
         self.title_label = QLabel(tr("menu.life"))
         self.title_label.setObjectName("title")
         top_layout.addWidget(self.title_label, 0, Qt.AlignVCenter)
+
+        # 死亡状态指示器（宠物死亡时显示）
+        self._death_label = QLabel(tr("life.death.status_label", default="[已死亡]"))
+        self._death_label.setStyleSheet(
+            "color: #e06060; font-weight: 700; font-size: 13px; "
+            "background: transparent; border: none; padding: 0 8px;"
+        )
+        self._death_label.setVisible(False)
+        top_layout.addWidget(self._death_label, 0, Qt.AlignVCenter)
+
         top_layout.addStretch()
 
         self.pin_button = QPushButton()
@@ -331,22 +341,22 @@ class LifeWindow(QDialog):
         self.pin_button.setIcon(create_pin_icon(color, active=self._always_on_top))
 
     def refresh_view(self):
-        # --- 死亡状态检测：切换覆盖层 ---
+        # --- 死亡状态处理 ---
         # 若 HP 已被外部（调试/重置）恢复到 > 0，自动执行复活
         if self.life.is_dead:
             hp = float(self.life.profile.states.get("hp", 0.0))
             if hp > 0:
                 self.life.revive()
             else:
-                self._update_death_overlay()
-                self.nav_frame.setVisible(False)
-                self.scroll_area.setVisible(False)
-                self.death_overlay.setVisible(True)
-                return
+                self._show_death_indicator(True)
 
+        # 正常 UI 始终可见（死亡时保持标签页可交互，效果列表能正常显示死亡 buff）
         self.nav_frame.setVisible(True)
         self.scroll_area.setVisible(True)
         self.death_overlay.setVisible(False)
+        # 未死亡时确保死亡指示器隐藏
+        if not self.life.is_dead:
+            self._show_death_indicator(False)
 
         completed_triggers = self.life.pop_completed_trigger_results()
 
@@ -515,6 +525,9 @@ class LifeWindow(QDialog):
             self._death_diedat_label.setText(tr("life.death.died_at", time=died_str))
         else:
             self._death_diedat_label.setText("")
+
+    def _show_death_indicator(self, visible: bool) -> None:
+        self._death_label.setVisible(visible)
 
     def _is_in_resize_zone(self, local_pos) -> bool:
         return local_pos.y() >= self.height() - self._resize_grip_size

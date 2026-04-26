@@ -44,7 +44,11 @@ if __name__ == "__main__":
         'WALK3_PNG': f'resources/PetArt/{package_name}/walk3.png',
         'WALK4_PNG': f'resources/PetArt/{package_name}/walk4.png',
         'NONE_PNG': f'resources/PetArt/{package_name}/None.png',
-        'HIDE_GIF': f'resources/PetArt/{package_name}/hide.gif'
+        'HIDE_GIF': f'resources/PetArt/{package_name}/hide.gif',
+        "SLEEP_PNG": f'resources/PetArt/{package_name}/sleep.png',
+        "SLEEP2_PNG": f'resources/PetArt/{package_name}/sleep2.png',
+        "DYING_PNG": f'resources/PetArt/{package_name}/dying.png',
+        "DIE_PNG": f'resources/PetArt/{package_name}/die.png'
     }
 
     convert_images_to_json(images, output_path=f"resources/{package_name}.json")

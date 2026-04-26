@@ -8,6 +8,7 @@ from ui.setting.constants import INPUT_WIDTH, LABEL_WIDTH
 from ui.setting.tabs.debug.css import PREVIEW_ROW_SPACING, ROW_SPACING, TAB_MARGINS, TAB_SPACING
 from util.cfg import load_config, save_config
 from util.i18n import tr
+from util.log import _log
 
 
 class DebugTab(QFrame):
@@ -194,6 +195,33 @@ class DebugTab(QFrame):
         quick_action_row.addStretch()
         action_layout.addLayout(quick_action_row)
 
+        # ---- 动作系统选择器 ---- #
+        action_selector_row = QHBoxLayout()
+        action_selector_row.setSpacing(PREVIEW_ROW_SPACING)
+        action_selector_label = QLabel(tr("settings.debug.action.selector"))
+        action_selector_label.setObjectName("fieldLabel")
+        action_selector_label.setFixedWidth(LABEL_WIDTH)
+        action_selector_row.addWidget(action_selector_label)
+
+        self.action_combo = QComboBox()
+        self.action_combo.setFixedWidth(INPUT_WIDTH + 80)
+        self.action_combo.addItem(tr("settings.debug.action.select_hint"), "")
+        # 填充所有已注册动作
+        self._refresh_action_combo()
+
+        action_selector_row.addWidget(self.action_combo)
+
+        trigger_btn = QPushButton(tr("settings.debug.action.trigger"))
+        trigger_btn.clicked.connect(self._trigger_selected_action)
+        action_selector_row.addWidget(trigger_btn)
+
+        stop_btn = QPushButton(tr("settings.debug.action.stop"))
+        stop_btn.clicked.connect(self._stop_selected_action)
+        action_selector_row.addWidget(stop_btn)
+
+        action_selector_row.addStretch()
+        action_layout.addLayout(action_selector_row)
+
         # ---- 休眠模式卡片 -------------------------------------------------- #
         debug_config2 = load_config("debug")
         initial_normal_tick_s = int(debug_config2.get("life_tick_interval_ms", 1000)) // 1000
@@ -306,3 +334,69 @@ class DebugTab(QFrame):
         IdleMonitor.reconfigure(config["life_afk_timeout_s"])
 
         return tr("settings.debug.saved")
+
+    def _get_action_system(self):
+        try:
+            from module.default.action import get_action_system
+            return get_action_system()
+        except Exception:
+            return None
+
+    def _refresh_action_combo(self):
+        """刷新动作下拉框内容。"""
+        # 保留当前选中项
+        current_id = self.action_combo.currentData()
+        self.action_combo.clear()
+        self.action_combo.addItem(tr("settings.debug.action.select_hint"), "")
+
+        asys = self._get_action_system()
+        if asys is None:
+            return
+
+        # 分组：原版动画 vs 自定义动作
+        vanilla_items = []
+        custom_items = []
+        for action_id in asys.get_all_action_ids():
+            record = asys.action_registry.get(action_id)
+            if not record:
+                continue
+            display = f"{record.name} ({action_id})"
+            if record.is_vanilla:
+                vanilla_items.append((display, action_id))
+            else:
+                custom_items.append((display, action_id))
+
+        if vanilla_items:
+            self.action_combo.insertSeparator(self.action_combo.count())
+            for display, aid in vanilla_items:
+                self.action_combo.addItem(display, aid)
+
+        if custom_items:
+            self.action_combo.insertSeparator(self.action_combo.count())
+            for display, aid in custom_items:
+                self.action_combo.addItem(display, aid)
+
+        # 恢复选中项
+        idx = self.action_combo.findData(current_id)
+        if idx >= 0:
+            self.action_combo.setCurrentIndex(idx)
+
+    def _trigger_selected_action(self):
+        """触发下拉框选中的动作。"""
+        action_id = self.action_combo.currentData()
+        if not action_id or not isinstance(action_id, str):
+            return
+        asys = self._get_action_system()
+        if asys:
+            asys.trigger_action(action_id)
+            _log.INFO(f"[Debug]手动触发动作: {action_id}")
+
+    def _stop_selected_action(self):
+        """停止下拉框选中的动作。"""
+        action_id = self.action_combo.currentData()
+        if not action_id or not isinstance(action_id, str):
+            return
+        asys = self._get_action_system()
+        if asys:
+            asys.stop_action(action_id)
+            _log.INFO(f"[Debug]手动停止动作: {action_id}")

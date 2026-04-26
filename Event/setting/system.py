@@ -11,6 +11,17 @@ from ui.PetWindow import DesktopPet
 from Event.input.move import move_jump
 from resources.image_resources import HIDE_GIF
 
+
+def _get_action_system(pet):
+    return getattr(pet, 'action_system', None)
+
+
+def _stop_all_actions(pet):
+    """停止 ActionSystem 中所有正在播放的动作。"""
+    asys = _get_action_system(pet)
+    if asys:
+        asys.stop_all()
+
 def AppStayTop(self: DesktopPet, check):
     if check.isChecked():
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
@@ -125,6 +136,7 @@ def _create_icon_from_base64(base64_data):
 
 
 def _play_hide_animation(self: DesktopPet, on_finished=None):
+    _stop_all_actions(self)
     self.stop_default_action_timer()
     self.PetArt.setPixmap(PetArtList[NONE_ART])
     self.movie = _create_movie_from_base64(HIDE_GIF)
@@ -152,9 +164,18 @@ def _on_show_finished(self: DesktopPet):
     from Event.Ai.walk import auto_walk
     auto_walk.start_timer()
     self.start_default_action_timer()
+    # 重新触发活跃 buff 的绑定动作
+    try:
+        from module.life.runtime import get_life_system
+        life = get_life_system()
+        if life is not None:
+            life._resync_buff_actions()
+    except Exception:
+        pass
 
 
 def _play_show_animation(self: DesktopPet, on_finished=None):
+    _stop_all_actions(self)
     self.stop_default_action_timer()
     self.PetArt.setPixmap(PetArtList[NONE_ART])
     movie = _create_movie_from_base64(HIDE_GIF)

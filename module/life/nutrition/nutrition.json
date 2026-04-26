@@ -10,18 +10,18 @@
     "decay": 0.2,
     "effects": [
       {
-        "min": 5500,
+        "min": 5501,
         "max": 6001,
         "buff_id": "well_fed"
       },
       {
-        "min": 1500,
+        "min": 3000,
         "max": 5500,
         "buff_id": "full"
       },
       {
         "min": 1,
-        "max": 1500,
+        "max": 1200,
         "buff_id": "hungry"
       },
       {
@@ -42,7 +42,7 @@
     "decay": 0.2,
     "effects": [
       {
-        "min": 4000,
+        "min": 4001,
         "max": 5000,
         "buff_id": "water_intox"
       },

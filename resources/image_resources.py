@@ -23,6 +23,8 @@ WALK4_PNG = None
 NONE_PNG = None
 HIDE_GIF = None
 
+_RESOURCE_CACHE: dict[str, str] = {}  # 资源包数据缓存，供 resolve_resource_reference 使用
+
 __all__ = [
     "LOGO_PNG",
     "DEFAULT_PNG",
@@ -96,7 +98,27 @@ def set_resource_pack(resource_pack: str):
     return _load_image_resources()
 
 
+def resolve_resource_reference(ref: str) -> str:
+    """解析 @KEY 格式的资源引用，返回对应的 base64 字符串。
+
+    若 ref 不以 '@' 开头，则原样返回（直接是 base64 数据）。
+    """
+    if not isinstance(ref, str) or not ref.startswith("@"):
+        return ref
+    key = ref[1:]
+    # 优先从 _RESOURCE_CACHE 查找
+    value = _RESOURCE_CACHE.get(key)
+    if value is not None:
+        return value
+    # 回退：直接从模块全局变量查找
+    value = globals().get(key)
+    if value is not None and isinstance(value, str):
+        return value
+    raise ValueError(f"资源包中未找到 key: {key}")
+
+
 def _load_image_resources():
+    global _RESOURCE_CACHE
     resource_path = Path("resources") / RESOURCES_PATH_NAME
     try:
         with open(resource_path, "r", encoding="utf-8") as f:
@@ -119,5 +141,6 @@ def _load_image_resources():
 
     globals().update(data)
     globals()["__all__"] = tuple(data.keys())
+    _RESOURCE_CACHE = data
     return data
 

@@ -5,6 +5,7 @@
     "desc": "吃的非常饱，感觉干什么都很有干劲。",
     "happys": 0.03,
     "energys": 0.5,
+    "hps": 0.01,
     "satiety_meters": -0.1
   },
   {
@@ -18,6 +19,8 @@
     "id": "hungry",
     "name": "饥饿",
     "desc": "肚子空空，很想吃点什么东西。",
+    "display_in_status_bar": true,
+    "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABKUlEQVRYhe2WP4rCQBSHv4iLjaBlqj2AlYKNB/AAHmHBQwQsrDzANltZ29h6AYNgY21jsa3bLCo2Ivgs4ogJjiYxMvHPr8u8N3nz+3i8GXjr1WUl+C+JUyOT4AFiKQkCAtAqlwGo5vMA2BnPW811L9YyTiB7w14BGH5/AfDfn8GJ84rjADA+JNdcV/WIj4RxAnF6wOfcLnz4gtPu1Fs/kJjvdgA0RqOzNY0TiNIDPuc6lZolOCExWa8v5j8UAQDmiw0AdjHnfS+3Z+PUPwHotHsq9GRz4Og0oN+/FQDOz0AtpfsuiExAOdQprHMl4wTCnFIARLxRbllXt0SarqkmoHOe5CsqnQRiORf9mzBYMF23oZbAlRytdCSCzpWME7ibBCRMXzwvgYfRHrkHTP32QZ4CAAAAAElFTkSuQmCC",
     "energy_max": "-15%",
     "happys": -0.01
   },
@@ -35,6 +38,7 @@
     "id": "refreshed",
     "name": "滋润",
     "desc": "水分充足，喉咙感觉很舒适。",
+    "hps": 0.01,
     "happys": 0.01,
     "hydration_max": "10%"
   },

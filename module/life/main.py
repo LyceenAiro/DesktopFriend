@@ -1131,7 +1131,7 @@ class LifeSystem:
                             record["_classes"] = classes
                     if record_id in result:
                         duplicate_count += 1
-                        _log.WARN(f"[Life][Register][{kind}]重复ID，后者覆盖前者: {record_id} file={file_path}")
+                        _log.INFO(f"[Life][Register][{kind}]已存在，mod 覆写字段: {record_id} file={file_path}")
                         existing = result[record_id]
                         existing.update(record)
                         record = existing
@@ -1236,7 +1236,7 @@ class LifeSystem:
                     )
                     if item_id in registry:
                         duplicate_count += 1
-                        _log.WARN(f"[Life][Register][item]重复ID，后者覆盖前者: {item_id} file={file_path}")
+                        _log.INFO(f"[Life][Register][item]已存在，mod 覆写字段: {item_id} file={file_path}")
                     registry[item_id] = payload
                 elif isinstance(payload, list):
                     category = file_path.parent.name
@@ -1257,7 +1257,7 @@ class LifeSystem:
                             )
                             if item_id in registry:
                                 duplicate_count += 1
-                                _log.WARN(f"[Life][Register][item]重复ID，后者覆盖前者: {item_id} file={file_path}")
+                                _log.INFO(f"[Life][Register][item]已存在，mod 覆写字段: {item_id} file={file_path}")
                             registry[item_id] = item
 
         _log.INFO(
@@ -1365,7 +1365,7 @@ class LifeSystem:
                     issues.extend(validate_fn(record, str(file_path)))
                     if record_id in registry:
                         duplicate_count += 1
-                        _log.WARN(f"[Life][Register][{kind}]重复ID，后者覆盖前者: {record_id} file={file_path}")
+                        _log.INFO(f"[Life][Register][{kind}]已存在，mod 覆写字段: {record_id} file={file_path}")
                     registry[record_id] = record
         _log.INFO(
             f"[Life][Register][{kind}]dirs={scanned_dirs} files={scanned_files} "
@@ -1409,7 +1409,7 @@ class LifeSystem:
                     issues.extend(validate_passive_buff_record(record, str(file_path)))
                     if record_id in registry:
                         duplicate_count += 1
-                        _log.WARN(f"[Life][Register][passive_buff]重复ID，后者覆盖前者: {record_id} file={file_path}")
+                        _log.INFO(f"[Life][Register][passive_buff]已存在，mod 覆写字段: {record_id} file={file_path}")
                     registry[record_id] = record
         _log.INFO(
             f"[Life][Register][passive_buff]dirs={scanned_dirs} files={scanned_files} "
@@ -1450,7 +1450,7 @@ class LifeSystem:
                         _log.WARN(f"[Life][Register][tag]标签缺少 buff_id: {tag_id} file={file_path}")
                         continue
                     if tag_id in registry:
-                        _log.WARN(f"[Life][Register][tag]重复ID，后者覆盖前者: {tag_id} file={file_path}")
+                        _log.INFO(f"[Life][Register][tag]已存在，mod 覆写字段: {tag_id} file={file_path}")
                     registry[tag_id] = record
         _log.INFO(f"[Life][Register][tag]dirs={scanned_dirs} files={scanned_files} records={len(registry)}")
         return registry
@@ -1545,6 +1545,8 @@ class LifeSystem:
         if consume:
             self._recompute_inventory_passive_attrs()
         _log.INFO(f"[Life][Item]使用物品成功 id={item_id} count={use_count} consume={consume}")
+        # 触发绑定动作（物品 loop 只播放一轮）
+        self._trigger_record_action(item, is_item=True)
         return True
 
     def add_item(self, item_id: str, count: int = 1) -> bool:
@@ -1884,8 +1886,12 @@ class LifeSystem:
             return False
 
         self._apply_record(buff, source="buff", duration_override=duration_override)
-        # 图鉴：记录已解锁 buff
-        self.profile.unlocked_buffs.add(buff_id)
+        # 图鉴：记录已解锁 buff（系统 buff 如 death 除外）
+        if buff_id != "death":
+            self.profile.unlocked_buffs.add(buff_id)
+        # 触发绑定动作（有动作 ID 且 auto_trigger_action 不为 false）
+        if buff.get("action_id") and buff.get("auto_trigger_action", True):
+            self._trigger_record_action(buff)
         return True
 
     def list_buff_ids(self) -> list[str]:
@@ -1900,6 +1906,10 @@ class LifeSystem:
         for effect in self.profile.active_effects:
             if effect.effect_id == effect_id:
                 self._revert_effect_attr_modifiers(effect)
+                # 停止绑定动作
+                buff_record = self.buff_registry.get(effect.effect_id)
+                if buff_record:
+                    self._stop_record_action(buff_record)
                 continue
             keep.append(effect)
         self.profile.active_effects = keep
@@ -2007,7 +2017,8 @@ class LifeSystem:
             elif duration_ticks > 0:
                 duration_ticks = max(1, int(duration_override))
 
-        if (per_tick or apply_states or apply_attrs or cap_modifiers or nutrition_per_tick) and duration_ticks > 0:
+        has_periodic_or_instant = bool(per_tick or apply_states or apply_attrs or cap_modifiers or nutrition_per_tick)
+        if has_periodic_or_instant and duration_ticks > 0:
             self._register_effect(
                 LifeEffect(
                     effect_id=record_id,
@@ -2025,6 +2036,30 @@ class LifeSystem:
             )
         elif cap_modifiers or apply_attrs or apply_states:
             self._apply_cap_modifiers(cap_modifiers)
+        elif not has_periodic_or_instant and (
+            record.get("action_id") or record.get("display_in_status_bar")
+        ):
+            # 纯标记型 buff（如 death）：无定时/即时效果，但有动作或状态栏显示需求
+            if duration_override is not None:
+                eff_duration = max(1, int(duration_override))
+            elif duration_ticks > 0:
+                eff_duration = duration_ticks
+            else:
+                eff_duration = 0
+            self._register_effect(
+                LifeEffect(
+                    effect_id=record_id,
+                    effect_name=record_name,
+                    effect_desc=record_desc,
+                    source=source,
+                    per_tick={},
+                    remaining_ticks=eff_duration,
+                    stack_rule="noadd" if eff_duration <= 0 else stack_rule,
+                    managed=eff_duration <= 0,
+                    apply_states={},
+                    attr_modifiers={},
+                )
+            )
         elif any(str(t.get("buff_id") or "") == record_id for t in self.tag_registry.values()):
             # 标签监控的 buff：无定时效果，以 managed 模式注册为标记效果
             self._register_effect(
@@ -2155,6 +2190,10 @@ class LifeSystem:
                     next_effects.append(effect)
                 else:
                     self._revert_effect_attr_modifiers(effect)
+                    # buff 自然到期：停止绑定的动作
+                    buff_record = self.buff_registry.get(effect.effect_id)
+                    if buff_record:
+                        self._stop_record_action(buff_record)
 
         self.profile.active_effects = next_effects
         self._tick_nutrition()
@@ -2525,9 +2564,39 @@ class LifeSystem:
         self._state_runtime_breakdown = breakdown
 
     def _trigger_death(self) -> None:
-        """处理桌宠死亡：暂停 tick、记录死亡摘要。"""
+        """处理桌宠死亡：应用死亡 buff、暂停 tick、记录死亡摘要。"""
         if self.is_dead:
             return
+
+        _log.DEBUG("[Life]_trigger_death 开始执行")
+
+        # 停止濒死动作
+        dying_record = self.buff_registry.get("dying")
+        if dying_record:
+            self._stop_record_action(dying_record)
+
+        # 应用死亡 buff（触发死亡动作）
+        death_record = self.buff_registry.get("death")
+        _log.DEBUG(f"[Life]死亡记录: {death_record.get('id') if death_record else None}, action_id={death_record.get('action_id') if death_record else None}")
+        if death_record:
+            # 确保 death 不出现在图鉴中
+            self.profile.unlocked_buffs.discard("death")
+            self._trigger_record_action(death_record)
+            # 移除所有已有的 death 效果（无论来源），统一替换为 managed 效果
+            self.profile.active_effects = [
+                e for e in self.profile.active_effects
+                if e.effect_id != "death"
+            ]
+            self.profile.active_effects.append(LifeEffect(
+                    effect_id="death",
+                    effect_name=str(death_record.get("name", "死亡")),
+                    effect_desc=str(death_record.get("desc", "")),
+                    source="death",
+                    per_tick={},
+                    remaining_ticks=0,
+                    managed=True,
+                ))
+
         self.is_dead = True
         self.paused = True
         self._death_summary = {
@@ -2551,6 +2620,15 @@ class LifeSystem:
         if hp <= 0:
             _log.WARN("[Life]无法复活：HP 仍为 0")
             return False
+        # 停止死亡动作
+        death_record = self.buff_registry.get("death")
+        if death_record:
+            self._stop_record_action(death_record)
+        # 移除所有死亡效果（无论来源）
+        self.profile.active_effects = [
+            e for e in self.profile.active_effects
+            if e.effect_id != "death"
+        ]
         self.is_dead = False
         self.paused = False
         self._death_summary = None
@@ -2710,6 +2788,9 @@ class LifeSystem:
                                 self._apply_managed_buff(buff_record, source=source_tag)
                     elif not in_range and existing is not None:
                         self._revert_effect_attr_modifiers(existing)
+                        br = self.buff_registry.get(str(buff_id))
+                        if br:
+                            self._stop_record_action(br)
                         self.profile.active_effects.remove(existing)
                 else:
                     # 旧方式（向下兼容）：直接每 tick 改变状态值
@@ -2794,6 +2875,9 @@ class LifeSystem:
                                 self._apply_managed_buff(buff_record, source=source_tag)
                     elif not in_range and existing is not None:
                         self._revert_effect_attr_modifiers(existing)
+                        br = self.buff_registry.get(str(buff_id))
+                        if br:
+                            self._stop_record_action(br)
                         self.profile.active_effects.remove(existing)
                 else:
                     if not in_range:
@@ -2866,6 +2950,9 @@ class LifeSystem:
         state_info = f" states={effect.apply_states}" if effect.apply_states else ""
         attr_info = f" attrs={effect.attr_modifiers}" if effect.attr_modifiers else ""
         _log.DEBUG(f"[Life]激活持续Buff: {record_id} (来源: {source}){attr_info}{state_info}")
+
+        # 触发绑定动作
+        self._trigger_record_action(record)
 
     def _revert_effect_attr_modifiers(self, effect: LifeEffect) -> None:
         if effect.attr_modifiers:
@@ -3062,6 +3149,8 @@ class LifeSystem:
         buff_entries: list[dict] = []
         buffs_unlocked = 0
         for rid, rec in self.buff_registry.items():
+            if rid == "death":
+                continue
             unlocked = rid in self.profile.unlocked_buffs
             entry = _entry(rid, rec)
             entry["unlocked"] = unlocked
@@ -3129,7 +3218,8 @@ class LifeSystem:
             if self.profile.inventory.get(rid, 0) <= 0:
                 self.profile.inventory[rid] = 1
         for rid in self.buff_registry:
-            self.profile.unlocked_buffs.add(rid)
+            if rid != "death":
+                self.profile.unlocked_buffs.add(rid)
         for rid in self.event_trigger_registry:
             self.profile.unlocked_triggers.add(rid)
         for rid in self.event_outcome_registry:
@@ -3474,6 +3564,8 @@ class LifeSystem:
 
         _log.DEBUG(f"[Life][Event]完成触发: {trigger_id} 结果数={len(result_log)}")
         _log.INFO(f"[Life][Event]执行完成 trigger={trigger_id} name={trigger_name} results={len(result_log)}")
+        # 触发绑定动作
+        self._trigger_record_action(trigger)
         self._append_recent_event_log(
             {
                 "type": "completed",
@@ -3741,6 +3833,9 @@ class LifeSystem:
         self.profile.unlocked_outcomes.add(outcome_id)
         _log.DEBUG(f"[Life][Event]应用 outcome id={outcome_id} depth={depth}")
 
+        # 触发绑定动作
+        self._trigger_record_action(outcome)
+
         # 应用 outcome 的直接效果（即时状态变化 + attr_exp）
         effects = outcome.get("effects")
         if isinstance(effects, dict):
@@ -3928,6 +4023,7 @@ class LifeSystem:
                     "cap_modifiers": e.cap_modifiers,
                     "attr_modifiers": e.attr_modifiers,
                     "apply_states": e.apply_states,
+                    "managed": e.managed,
                 }
                 for e in self.profile.active_effects
             ],
@@ -4045,6 +4141,7 @@ class LifeSystem:
                     ],
                     attr_modifiers={k: float(v) for k, v in dict(raw.get("attr_modifiers", {})).items()},
                     apply_states={k: float(v) for k, v in dict(raw.get("apply_states", {})).items()},
+                    managed=bool(raw.get("managed", False)),
                 )
             )
 
@@ -4215,3 +4312,64 @@ class LifeSystem:
         except Exception as exc:
             _log.EXCEPTION("[Life]存档导入失败", exc)
             return False, str(exc)
+
+    # ═══════════════════════════════════════════════
+    # 动作绑定
+    # ═══════════════════════════════════════════════
+
+    def _get_action_system(self):
+        """获取 ActionSystem 单例（避免循环导入）。"""
+        try:
+            from module.default.action import get_action_system
+            return get_action_system()
+        except Exception:
+            return None
+
+    def _trigger_record_action(self, record: dict, is_item: bool = False) -> None:
+        """根据 record 中的 action_id 触发动作。
+
+        Args:
+            record: buff/item/trigger/outcome 的注册数据
+            is_item: 是否为物品（物品的 loop 只播放一轮）
+        """
+        action_id = record.get("action_id")
+        _log.DEBUG(f"[Life]_trigger_record_action: record_id={record.get('id')} action_id={action_id}")
+        if not action_id or not isinstance(action_id, str):
+            _log.DEBUG(f"[Life]_trigger_record_action: 无动作ID (from {record.get('id', '?')})")
+            return
+        asys = self._get_action_system()
+        if not asys:
+            _log.WARN(f"[Life]获取动作系统失败（asys=None）")
+            return
+        action_record = asys.action_registry.get(action_id)
+        if not action_record:
+            _log.WARN(f"[Life]动作绑定未注册: {action_id} (from {record.get('id', '?')})")
+            return
+
+        _log.INFO(f"[Life]触发绑定动作: {action_id} (from {record.get('id', '?')})")
+        asys.trigger_action(action_id)
+
+        # 物品：loop 模式只播放一轮后停止
+        if is_item and action_record.play_mode == "loop":
+            total_ms = action_record.frame_interval_ms * action_record.frame_count
+            if total_ms > 0:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(total_ms, lambda: asys.stop_action(action_id))
+                _log.DEBUG(f"[Life]物品 loop 动作将在 {total_ms}ms 后停止: {action_id}")
+
+    def _stop_record_action(self, record: dict) -> None:
+        """停止 record 绑定的动作。"""
+        action_id = record.get("action_id")
+        if not action_id or not isinstance(action_id, str):
+            return
+        asys = self._get_action_system()
+        if asys:
+            asys.stop_action(action_id)
+            _log.DEBUG(f"[Life]停止绑定动作: {action_id} (from {record.get('id', '?')})")
+
+    def _resync_buff_actions(self) -> None:
+        """重新触发所有活跃 buff 的绑定动作（用于显示宠物后恢复动作）。"""
+        for effect in self.profile.active_effects:
+            record = self.buff_registry.get(effect.effect_id)
+            if record and record.get("action_id"):
+                self._trigger_record_action(record)

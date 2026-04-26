@@ -1,0 +1,27 @@
+[
+  {
+    "id": "action.sleep",
+    "name": "睡眠",
+    "desc": "角色进入睡眠状态，快速恢复精神与体力。",
+    "image_base64": ["@SLEEP_PNG", "@SLEEP2_PNG"],
+    "frames": 2,
+    "play_mode": "loop",
+    "block_mode": "exclusive"
+  },
+  {
+    "id": "action.dying",
+    "name": "濒死",
+    "desc": "生命体征微弱，角色处于濒死状态。",
+    "image_base64": ["@DYING_PNG"],
+    "play_mode": "once",
+    "block_mode": "exclusive"
+  },
+  {
+    "id": "action.die",
+    "name": "死亡",
+    "desc": "生命体征已消失，角色进入死亡状态。",
+    "image_base64": ["@DIE_PNG"],
+    "play_mode": "once",
+    "block_mode": "exclusive"
+  }
+]

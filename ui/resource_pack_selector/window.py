@@ -27,10 +27,10 @@ from util.i18n import tr
 
 
 class ResourcePackSelector(QDialog):
-    def __init__(self, resource_packs, parent=None):
+    def __init__(self, resource_packs, default_pack=None, parent=None):
         super().__init__(parent)
         self.resource_packs = list(resource_packs)
-        self.selected_pack = None
+        self.selected_pack = default_pack if default_pack else None
         self._known_pack_files = []
         self.remember_as_default = False
 

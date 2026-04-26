@@ -87,6 +87,7 @@ class LifeModRegistry:
         self._loaded_mods: dict[str, dict[str, Any]] = {}
         self._event_log: list[dict[str, str]] = []
         self._resource_hooks: dict[str, dict[str, Any]] = {}
+        self._actually_removed_ids: dict[str, dict[str, list[str]]] = {}
 
     def discover(self) -> list[Path]:
         if not self.mod_root.exists():
@@ -241,14 +242,17 @@ class LifeModRegistry:
     def resolve_load_order(self) -> tuple[list[str], dict[str, list[str]]]:
         """Return deterministic mod load order and issues.
 
-        Mods with validation issues (missing dependency, protocol mismatch, etc.)
-        are skipped individually and logged. Mods that transitively depend on a
-        skipped mod are also skipped. The remaining valid mods are returned in
-        topological order so the caller can proceed with a partial load.
+        Mods with validation issues (bad pack_info, protocol mismatch, etc.)
+        are skipped immediately. Mods whose dependencies are not yet met are
+        NOT skipped here — they are included in the order and deferred to
+        execute_load_plan() for retry-based dependency resolution.
+
+        Intentionally disabled mods (from load_order.json) are also skipped.
 
         Returns:
-            (order, issues) where order contains only loadable mods and issues
-            is informational (skipped mods and their reasons).
+            (order, issues) where order contains only loadable mod candidates
+            and issues shows mods that were directly skipped (validation fail,
+            disabled). Dependency failures are handled at load time.
         """
 
         issues = self.validate()
@@ -273,19 +277,6 @@ class LifeModRegistry:
             except Exception:
                 pass
         skip_set: set[str] = set(issues.keys()) | disabled_mods
-        changed = True
-        while changed:
-            changed = False
-            for mod_id, pack in info_map.items():
-                if mod_id in skip_set:
-                    continue
-                requires = {str(dep).strip() for dep in pack.get("requires", []) if str(dep).strip()}
-                blocked_by = requires & skip_set
-                if blocked_by:
-                    reason = f"跳过加载: 前置 mod 不可用: {', '.join(sorted(blocked_by))}"
-                    issues.setdefault(mod_id, []).append(reason)
-                    skip_set.add(mod_id)
-                    changed = True
 
         # Log skipped mods. Intentionally disabled mods are logged at INFO level.
         for mod_id in skip_set:
@@ -480,6 +471,48 @@ class LifeModRegistry:
         loaded_hook_states: dict[str, dict[str, Any]] = {}
         loaded_remove_ids: dict[str, dict[str, list[str]]] = {}
 
+        # Registry snapshot helpers for per-mod diff logging
+        _REGISTRY_NAMES = (
+            "state_definitions", "nutrition_definitions", "attr_definitions",
+            "buff_registry", "item_registry", "event_trigger_registry",
+            "event_outcome_registry", "passive_buff_registry", "tag_registry",
+        )
+
+        def _snapshot(ls):
+            if ls is None:
+                return {}
+            return {name: dict(getattr(ls, name, {})) for name in _REGISTRY_NAMES}
+
+        def _diff(before, after):
+            added, removed, modified = {}, {}, {}
+            for key in before:
+                b_reg, a_reg = before.get(key, {}), after.get(key, {})
+                b_ids, a_ids = set(b_reg.keys()), set(a_reg.keys())
+                new_ids = a_ids - b_ids
+                if new_ids:
+                    added[key] = sorted(new_ids)
+                gone_ids = b_ids - a_ids
+                if gone_ids:
+                    removed[key] = sorted(gone_ids)
+                common = b_ids & a_ids
+                changed = [i for i in common if json.dumps(b_reg[i], sort_keys=True) != json.dumps(a_reg[i], sort_keys=True)]
+                if changed:
+                    modified[key] = sorted(changed)
+            return added, removed, modified
+
+        def _fmt_diff(added, removed, modified):
+            parts = []
+            if added:
+                items = " ".join(f"{k}:{len(v)} {v}" for k, v in added.items())
+                parts.append("新增 " + items)
+            if modified:
+                items = " ".join(f"{k}:{len(v)} {v}" for k, v in modified.items())
+                parts.append("修改 " + items)
+            if removed:
+                items = " ".join(f"{k}:{len(v)} {v}" for k, v in removed.items())
+                parts.append("删除 " + items)
+            return " | ".join(parts)
+
         def _builtin_load(mod_id: str, pack: dict[str, Any]) -> bool:
             _log.DEBUG(f"[Mod]开始加载: {mod_id}")
             if bool(pack.get("simulate_load_fail", False)):
@@ -505,8 +538,30 @@ class LifeModRegistry:
                 loaded_remove_ids[mod_id] = remove_ids
                 life_system.add_remove_ids(remove_ids)
 
+            # Snapshot registries before reload for per-mod diff
+            _before = _snapshot(life_system) if life_system is not None else {}
+
             if life_system is not None:
                 life_system.reload_registries()
+
+            # Diff registries to find added/modified/removed IDs
+            _after = _snapshot(life_system) if life_system is not None else {}
+            _added, _removed, _modified = _diff(_before, _after)
+
+            # Track actually-removed IDs (map diff keys to remove_ids-style keys)
+            _REMOVED_KEY_MAP = {
+                "buff_registry": "buff", "item_registry": "item",
+                "event_trigger_registry": "event_trigger", "event_outcome_registry": "event_outcome",
+                "passive_buff_registry": "passive_buff",
+                "state_definitions": "status", "nutrition_definitions": "nutrition",
+                "attr_definitions": "attrs", "tag_registry": "tag",
+            }
+            _actual_removed: dict[str, list[str]] = {}
+            for _diff_key, _ids in _removed.items():
+                _mapped = _REMOVED_KEY_MAP.get(_diff_key)
+                if _mapped and _ids:
+                    _actual_removed[_mapped] = _ids
+            self._actually_removed_ids[mod_id] = _actual_removed
             if "lang_dir" in resource_dirs:
                 attach_lang_dir(resource_dirs["lang_dir"])
 
@@ -524,7 +579,11 @@ class LifeModRegistry:
 
             self._loaded_mods[mod_id] = dict(pack)
             self._append_event("load", mod_id, "ok", "", event_log_path)
-            _log.INFO(f"[Mod]加载成功: {mod_id} (v{pack.get('version', '?')}) 资源={list(resource_dirs.keys())}")
+            diff_text = _fmt_diff(_added, _removed, _modified)
+            if diff_text:
+                _log.INFO(f"[Mod]加载成功: {mod_id} (v{pack.get('version', '?')}) | {diff_text}")
+            else:
+                _log.INFO(f"[Mod]加载成功: {mod_id} (v{pack.get('version', '?')}) 资源={list(resource_dirs.keys())} | 无变更")
             return True
 
         def _builtin_rollback(mod_id: str, pack: dict[str, Any]) -> bool:
@@ -574,32 +633,12 @@ class LifeModRegistry:
             return True
 
         result = self.execute_load_plan(load_callback=_builtin_load, rollback_callback=_builtin_rollback)
-        if not result.get("ok", False):
-            # 防止遗留脏状态：事务失败后最终清空内置加载状态。
-            remaining_loaded_mods = dict(self._loaded_mods)
-            self._loaded_mods.clear()
-            if life_system is not None:
-                life_system.clear_remove_ids()
-                for resource_dirs in loaded_resource_dirs.values():
-                    life_resource_dirs = {
-                        k: v
-                        for k, v in resource_dirs.items()
-                        if k in {"status_dir", "buff_dir", "item_dir", "nutrition_dir", "event_trigger_dir", "event_outcome_dir", "passive_buff_dir", "attr_dir", "level_dir", "tag_dir"}
-                    }
-                    if life_resource_dirs:
-                        life_system.detach_mod_resource_dirs(reload=False, **life_resource_dirs)
-                    if "lang_dir" in resource_dirs:
-                        detach_lang_dir(resource_dirs["lang_dir"])
-                life_system.reload_registries()
-            for mod_id, hook_states in list(loaded_hook_states.items()):
-                pack = remaining_loaded_mods.get(mod_id, {})
-                for hook_name, hook in reversed(list(self._resource_hooks.items())):
-                    if hook_name not in hook_states:
-                        continue
-                    try:
-                        hook["detach"](mod_id, pack, hook_states[hook_name])
-                    except Exception:
-                        continue
+        # With the new defer/retry algorithm, execute_load_plan always returns
+        # ok=True. Individual load failures are in result["issues"]. We avoid
+        # transactional rollback — each mod stands or falls independently.
+        abandoned = [m for m in result.get("issues", {}) if "前置mod未满足" in " ".join(result["issues"].get(m, []))]
+        if abandoned:
+            _log.WARN(f"[Mod]以下 mod 因前置mod未满足被放弃: {abandoned}")
         return result
 
     def execute_load_plan(
@@ -607,66 +646,112 @@ class LifeModRegistry:
         load_callback,
         rollback_callback,
     ) -> dict[str, Any]:
-        """Execute load plan transactionally and rollback on first failure.
+        """Execute load plan with graceful dependency resolution.
+
+        Unlike the old transactional approach, this method:
+        1. Loads mods in topological order
+        2. If a mod's dependencies aren't loaded yet, defers it to a pending queue
+        3. After each successful load, retries all pending mods
+        4. After the main queue is exhausted, retries pending in rounds
+        5. If no progress after retry rounds, abandons remaining pending mods
 
         Args:
             load_callback: callable(mod_id: str, pack_info: dict) -> bool
-            rollback_callback: callable(mod_id: str, pack_info: dict) -> bool
+            rollback_callback: unused in this algorithm (no transactional rollback)
 
         Returns:
             {
-                "ok": bool,
+                "ok": bool,  # always True — individual failures are in issues
                 "loaded": list[str],
-                "rolled_back": list[str],
+                "rolled_back": [],
                 "issues": dict[str, list[str]],
             }
         """
 
         plan, issues = self.build_load_plan()
-        # issues only contains skipped-mod info; an empty plan with no mods at all is still ok.
         if not plan:
             if issues:
                 _log.WARN(f"[Mod]没有可加载的 mod（{len(issues)} 个 mod 已跳过）")
             return {"ok": True, "loaded": [], "rolled_back": [], "issues": issues}
 
-        # result_issues starts with skipped-mod info from build_load_plan so it is
-        # always included in the final result regardless of load outcome.
-        loaded: list[tuple[str, dict[str, Any]]] = []
         result_issues: dict[str, list[str]] = dict(issues)
+        loaded_ids: set[str] = set()
+        loaded: list[tuple[str, dict[str, Any]]] = []
+        pending: list[tuple[str, dict[str, Any]]] = []
 
-        for mod_id, pack in plan:
+        def _deps_satisfied(mod_id: str, pack: dict[str, Any]) -> bool:
+            requires = {str(dep).strip() for dep in pack.get("requires", []) if str(dep).strip()}
+            return requires <= loaded_ids
+
+        def _try_load(mod_id: str, pack: dict[str, Any]) -> bool:
             try:
-                ok = bool(load_callback(mod_id, pack))
+                return bool(load_callback(mod_id, pack))
             except Exception as exc:
-                ok = False
                 result_issues.setdefault(mod_id, []).append(f"加载异常: {exc}")
+                return False
 
-            if ok:
-                loaded.append((mod_id, pack))
-                continue
+        def _retry_pending() -> bool:
+            progress = False
+            if pending:
+                _log.INFO(f"[Mod]重试待加载队列 ({len(pending)} 个)...")
+            i = 0
+            while i < len(pending):
+                mod_id, pack = pending[i]
+                if _deps_satisfied(mod_id, pack):
+                    if _try_load(mod_id, pack):
+                        loaded_ids.add(mod_id)
+                        loaded.append((mod_id, pack))
+                        pending.pop(i)
+                        _log.INFO(f"[Mod]重试成功: {mod_id}")
+                        progress = True
+                        continue  # re-check remaining pending from same index
+                    else:
+                        # Actual load failure — don't retry
+                        if mod_id not in result_issues:
+                            result_issues.setdefault(mod_id, []).append("加载失败")
+                        pending.pop(i)
+                        continue
+                i += 1
+            return progress
 
-            if mod_id not in result_issues:
-                result_issues.setdefault(mod_id, []).append("加载失败")
-
-            rolled_back: list[str] = []
-            for loaded_id, loaded_pack in reversed(loaded):
-                try:
-                    rollback_ok = bool(rollback_callback(loaded_id, loaded_pack))
-                except Exception as exc:
-                    rollback_ok = False
-                    result_issues.setdefault(loaded_id, []).append(f"回滚异常: {exc}")
-
-                if rollback_ok:
-                    rolled_back.append(loaded_id)
+        # Phase 1: Main queue
+        for mod_id, pack in plan:
+            if _deps_satisfied(mod_id, pack):
+                if _try_load(mod_id, pack):
+                    loaded_ids.add(mod_id)
+                    loaded.append((mod_id, pack))
+                    # Retry pending after each successful load
+                    _retry_pending()
                 else:
-                    result_issues.setdefault(loaded_id, []).append("回滚失败")
+                    # Actual load failure
+                    if mod_id not in result_issues:
+                        result_issues.setdefault(mod_id, []).append("加载失败")
+            else:
+                # Defer to pending
+                requires = {str(dep).strip() for dep in pack.get("requires", []) if str(dep).strip()}
+                missing = sorted(requires - loaded_ids)
+                _log.INFO(f"[Mod]延迟加载: {mod_id} (前置 {missing} 未就绪)")
+                pending.append((mod_id, pack))
 
-            return {
-                "ok": False,
-                "loaded": [mod for mod, _ in loaded],
-                "rolled_back": rolled_back,
-                "issues": result_issues,
-            }
+        # Phase 2: Retry rounds
+        while pending:
+            progress = _retry_pending()
+            if not progress:
+                break
+
+        # Phase 3: Abandon remaining
+        for mod_id, pack in pending:
+            requires = {str(dep).strip() for dep in pack.get("requires", []) if str(dep).strip()}
+            missing = requires - loaded_ids
+            reason = f"前置mod未满足: {', '.join(sorted(missing))}"
+            result_issues.setdefault(mod_id, []).append(reason)
+            _log.WARN(f"[Mod]放弃 {mod_id}: {reason}")
+
+        if loaded:
+            _log.INFO(f"[Mod]加载完成，共 {len(loaded)} 个 mod: {[m for m, _ in loaded]}")
+        abandoned = len(pending)
+        if abandoned:
+            _log.WARN(f"[Mod]放弃加载 {abandoned} 个 mod（前置mod不存在或未加载）")
 
         return {
             "ok": True,

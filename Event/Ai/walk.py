@@ -54,6 +54,14 @@ class AutoWalk:
             delta = 0
         self.idle_time += delta
         self._last_check_ts = now_ts
+
+        # 检查动作系统是否有独占/序列动作播放中
+        if hasattr(PetWindow, 'action_system') and PetWindow.action_system is not None:
+            if PetWindow.action_system.has_exclusive_or_sequence():
+                _log.DEBUG("[AI]动作系统有独占/序列动作播放中，跳过自动行走")
+                self.idle_time = 0
+                return
+
         if PetWindow.AutoMove and not self.is_paused_due_to_action and not PetWindow.is_follow_mouse and self.idle_time > self.idle_threshold:
             self._perform_random_action()
         else:
