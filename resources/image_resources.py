@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from os import makedirs, path
 from pathlib import Path
 
@@ -64,7 +65,13 @@ def _normalize_pack_name(resource_pack: str) -> str:
 
 
 def get_available_resource_packs(resources_dir: str = "resources"):
-    resources_path = Path(resources_dir)
+    # PyInstaller 打包时优先从 _MEIPASS 查找
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        resources_path = Path(sys._MEIPASS) / resources_dir
+        if not resources_path.exists():
+            resources_path = Path(resources_dir)
+    else:
+        resources_path = Path(resources_dir)
     if not resources_path.exists():
         return []
     return sorted([json_file.name for json_file in resources_path.glob("*.json")])
@@ -72,7 +79,13 @@ def get_available_resource_packs(resources_dir: str = "resources"):
 
 def get_resource_pack_display_name(resource_pack: str, resources_dir: str = "resources") -> str:
     pack_file_name = _normalize_pack_name(resource_pack)
-    resource_path = Path(resources_dir) / pack_file_name
+    # PyInstaller 打包时优先从 _MEIPASS 读取
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        resource_path = Path(sys._MEIPASS) / resources_dir / pack_file_name
+        if not resource_path.exists():
+            resource_path = Path(resources_dir) / pack_file_name
+    else:
+        resource_path = Path(resources_dir) / pack_file_name
     fallback_name = Path(pack_file_name).stem
 
     try:
@@ -119,7 +132,13 @@ def resolve_resource_reference(ref: str) -> str:
 
 def _load_image_resources():
     global _RESOURCE_CACHE
-    resource_path = Path("resources") / RESOURCES_PATH_NAME
+    # PyInstaller 打包时资源文件在 sys._MEIPASS/resources/ 下
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        resource_path = Path(sys._MEIPASS) / "resources" / RESOURCES_PATH_NAME
+        if not resource_path.exists():
+            resource_path = Path("resources") / RESOURCES_PATH_NAME
+    else:
+        resource_path = Path("resources") / RESOURCES_PATH_NAME
     try:
         with open(resource_path, "r", encoding="utf-8") as f:
             data = json.load(f)

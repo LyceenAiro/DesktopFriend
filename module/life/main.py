@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import sys
 import time
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
@@ -93,15 +94,21 @@ class LifeSystem:
         tag_dir: str | Path = "module/life/tags",
         store: LifeSqliteStore | None = None,
     ):
-        self.buff_dir = Path(buff_dir)
-        self.item_dir = Path(item_dir)
-        self.status_dir = Path(status_dir)
-        self.nutrition_dir = Path(nutrition_dir)
-        self.event_trigger_dir = Path(event_trigger_dir)
-        self.event_outcome_dir = Path(event_outcome_dir)
-        self.passive_buff_dir = Path(passive_buff_dir)
-        self.attr_dir = Path(attr_dir)
-        self.tag_dir = Path(tag_dir)
+        # PyInstaller 打包后资源文件在 sys._MEIPASS 下
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            _base = Path(sys._MEIPASS)
+        else:
+            _base = Path(".")
+
+        self.buff_dir = _base / Path(buff_dir)
+        self.item_dir = _base / Path(item_dir)
+        self.status_dir = _base / Path(status_dir)
+        self.nutrition_dir = _base / Path(nutrition_dir)
+        self.event_trigger_dir = _base / Path(event_trigger_dir)
+        self.event_outcome_dir = _base / Path(event_outcome_dir)
+        self.passive_buff_dir = _base / Path(passive_buff_dir)
+        self.attr_dir = _base / Path(attr_dir)
+        self.tag_dir = _base / Path(tag_dir)
         self.extra_buff_dirs: list[Path] = []
         self.extra_item_dirs: list[Path] = []
         self.extra_status_dirs: list[Path] = []
@@ -112,7 +119,7 @@ class LifeSystem:
         self.extra_attr_dirs: list[Path] = []
         self.extra_tag_dirs: list[Path] = []
         # 全局等级系统资源目录（mod 可注入覆盖 level_setting.json）
-        self.level_dir: Path = Path("module/life/level")
+        self.level_dir: Path = _base / Path("module/life/level")
         self.extra_level_dirs: list[Path] = []
         self.store = store or LifeSqliteStore()
         self.character_name: str = ""  # 角色名称（由外部注入，如资源包 PACK_NAME）
@@ -771,19 +778,6 @@ class LifeSystem:
                 self.profile.attr_exp[attr_id] = 0.0
             if attr_id not in self.profile.attr_level:
                 self.profile.attr_level[attr_id] = 0
-        result: dict[str, dict[str, Any]] = {}
-        for index, state_id in enumerate(BASE_STATES):
-            result[state_id] = {
-                "id": state_id,
-                "name": state_id,
-                "i18n_key": f"life.state.{state_id}",
-                "default": 100.0,
-                "min": 0.0,
-                "max": GLOBAL_VALUE_MAX,
-                "order": index,
-            }
-        return result
-
     def _load_state_definitions(self) -> tuple[dict[str, dict[str, Any]], list[ValidationIssue]]:
         loaded: list[dict[str, Any]] = []
         scanned_dirs = 0
@@ -1837,12 +1831,13 @@ class LifeSystem:
                     }
                 )
 
-        for attr_id in BASE_ATTRS:
+        for attr_id in self.attr_keys:
             if attr_id in item:
+                attr_def = self.attr_definitions.get(attr_id, {})
                 summary["instant_attrs"].append(
                     {
                         "id": attr_id,
-                        "i18n_key": f"life.attr.{attr_id}",
+                        "i18n_key": str(attr_def.get("i18n_key") or f"life.attr.{attr_id}"),
                         "delta": float(item[attr_id]),
                     }
                 )
@@ -1947,7 +1942,7 @@ class LifeSystem:
 
         # Instant attr effects (tracked in attr_modifiers for revert on buff end).
         apply_attrs: dict[str, float] = {}
-        for attr in BASE_ATTRS:
+        for attr in self.attr_keys:
             if attr in record:
                 try:
                     delta = float(record[attr])
@@ -2905,7 +2900,7 @@ class LifeSystem:
 
         cap_modifiers = self._extract_cap_modifiers(record)
         attr_modifiers: dict[str, float] = {}
-        for attr in BASE_ATTRS:
+        for attr in self.attr_keys:
             if attr in record:
                 attr_modifiers[attr] = float(record[attr])
 
