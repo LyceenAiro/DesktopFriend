@@ -284,10 +284,16 @@ class LifeInventoryTab(QFrame):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
-        title = QLabel(f"{item.get('name', item.get('id', 'unknown'))}  x{int(item.get('count', 0))}")
+        count = int(item.get("count", 0))
+        is_unique = item.get("unique", False)
+        if is_unique:
+            title_text = item.get('name', item.get('id', 'unknown'))
+        else:
+            title_text = f"{item.get('name', item.get('id', 'unknown'))}  x{count}"
+        title = QLabel(title_text)
         title.setStyleSheet("font-weight: 700; color: #f3f3f3; background: transparent; border: none;")
         title_row.addWidget(title)
-        if item.get("unique", False):
+        if is_unique:
             unique_badge = QLabel(tr("life.inventory.unique_badge"))
             unique_badge.setStyleSheet(
                 "background: #c8a02066; color: #ffffff; border: 1px solid #c8a020aa; "

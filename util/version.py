@@ -1,4 +1,4 @@
 APP_NAME = "DesktopFriend"
-version = "0.3.1"
+version = "0.3.2"
 author = "LyceenAiro"
 github_link = "https://github.com/LyceenAiro/DesktopFriend"

@@ -165,6 +165,9 @@ class LifeSystem:
 
         self.profile = self._create_default_profile()
         self.reload_registries()
+        # 注册表已就绪，加载 starter_inventory（需 item_registry 非空）
+        self.profile.inventory = self._load_starter_inventory()
+        self._recompute_inventory_passive_attrs()
         _log.INFO(
             f"[Life]LifeSystem 初始化完成 states={len(self.state_definitions)} nutrition={len(self.nutrition_definitions)} "
             f"attrs={len(self.attr_definitions)} inventory={len(self.profile.inventory)}"
@@ -226,8 +229,7 @@ class LifeSystem:
         attr_exp: dict[str, float] = {k: 0.0 for k in self.attr_definitions.keys()}
         attr_level: dict[str, int] = {k: 0 for k in self.attr_definitions.keys()}
         attr_base: dict[str, float] = {k: float(defn.get("initial", 10.0)) for k, defn in self.attr_definitions.items()} if self.attr_definitions else {}
-        inventory = self._load_starter_inventory()
-        return LifeProfile(states=states, state_max=state_max, state_min=state_min, nutrition=nutrition, nutrition_max=nutrition_max, nutrition_min=nutrition_min, attrs=attrs, inventory=inventory, attr_exp=attr_exp, attr_level=attr_level, attr_base=attr_base)
+        return LifeProfile(states=states, state_max=state_max, state_min=state_min, nutrition=nutrition, nutrition_max=nutrition_max, nutrition_min=nutrition_min, attrs=attrs, inventory={}, attr_exp=attr_exp, attr_level=attr_level, attr_base=attr_base)
 
     def _load_starter_inventory(self) -> dict[str, int]:
         result: dict[str, int] = {}
@@ -3070,11 +3072,12 @@ class LifeSystem:
                         next_exp_required = float(lt_entry["exp_required"])
                         break
             inventory_bonus = self._inventory_passive_attrs.get(attr, 0.0)
+            effective_value = current + inventory_bonus
             result.append({
                 "id": attr,
                 "name": name,
                 "color": color,
-                "value": current,
+                "value": effective_value,
                 "base": base,
                 "permanent_delta": permanent_delta,
                 "effect_delta": effect_delta,

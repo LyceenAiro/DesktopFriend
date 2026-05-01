@@ -88,6 +88,7 @@ class LifeModRegistry:
         self._event_log: list[dict[str, str]] = []
         self._resource_hooks: dict[str, dict[str, Any]] = {}
         self._actually_removed_ids: dict[str, dict[str, list[str]]] = {}
+        self._collect_cache: tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, Path], dict[str, list[str]]] | None = None
 
     def discover(self) -> list[Path]:
         if not self.mod_root.exists():
@@ -108,6 +109,8 @@ class LifeModRegistry:
     def _collect_mods(
         self,
     ) -> tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, Path], dict[str, list[str]]]:
+        if self._collect_cache is not None:
+            return self._collect_cache
         issues: dict[str, list[str]] = {}
         info_map: dict[str, dict[str, Any]] = {}
         source_map: dict[str, str] = {}
@@ -131,6 +134,7 @@ class LifeModRegistry:
             source_map[mod_id] = mod_dir.name
             path_map[mod_id] = mod_dir
 
+        self._collect_cache = (info_map, source_map, path_map, issues)
         return info_map, source_map, path_map, issues
 
     def validate(self, _pre_collected=None) -> dict[str, list[str]]:
@@ -466,6 +470,7 @@ class LifeModRegistry:
         """
 
         self._event_log.clear()
+        self._collect_cache = None
         _, _, path_map, _ = self._collect_mods()
         loaded_resource_dirs: dict[str, dict[str, Path]] = {}
         loaded_hook_states: dict[str, dict[str, Any]] = {}

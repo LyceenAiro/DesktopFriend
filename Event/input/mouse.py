@@ -40,7 +40,7 @@ def PetmousePressEvent(self: DesktopPet, event):
         # 左键事件
         self.mouse_press_position = event.globalPos() - self.pos()
         self.move_count = 0
-        self.Picktimer.start(300)
+        self.Picktimer.start(1)
 
     event.accept() 
 

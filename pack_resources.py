@@ -2,53 +2,59 @@ import base64
 import json
 from pathlib import Path
 
+_SUPPORTED_EXTENSIONS = {".png", ".gif", ".jpg", ".jpeg", ".bmp", ".webp"}
 
-def convert_images_to_json(images_dict, output_path="resources/default.json"):
-    base_dir = Path(__file__).resolve().parent
-    output_file = base_dir / output_path
-    output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    image_data = {}
-    for var_name, image_path in images_dict.items():
-        path = base_dir / image_path
-        if path.exists():
-            with path.open('rb') as img_file:
-                image_bytes = img_file.read()
-            image_data[var_name] = base64.b64encode(image_bytes).decode('utf-8')
-            print(f"已转换: {path} -> {var_name}")
+def pack_petart_folder(petart_dir: Path, output_dir: Path) -> None:
+    """将 PetArt 下的一个角色文件夹打包为 resources/{name}.json"""
+    package_name = petart_dir.name
+    image_data: dict[str, str] = {}
+    image_data["PACK_NAME"] = package_name
+
+    # 收集所有支持的图片文件
+    image_files: list[Path] = []
+    for ext in _SUPPORTED_EXTENSIONS:
+        image_files.extend(sorted(petart_dir.glob(f"*{ext}")))
+
+    if not image_files:
+        print(f"  跳过（无图片文件）: {package_name}")
+        return
+
+    for img_path in image_files:
+        key = img_path.stem.upper()  # default.png → DEFAULT, hide.gif → HIDE
+        # 根据扩展名添加后缀标识
+        if img_path.suffix.lower() == ".gif":
+            key = f"{key}_GIF"
         else:
-            # 如果不是有效路径，作为纯字符串直接写入
-            if not Path(image_path).suffix and not ('/' in image_path or '\\' in image_path):
-                image_data[var_name] = image_path
-                print(f"已写入字符串字段: {var_name} = {image_path}")
-            else:
-                print(f"文件不存在: {path}")
+            key = f"{key}_PNG"
+        with img_path.open("rb") as f:
+            image_data[key] = base64.b64encode(f.read()).decode("utf-8")
+        print(f"  已转换: {img_path.name} -> {key}")
 
-    with output_file.open('w', encoding='utf-8') as f:
+    output_file = output_dir / f"{package_name}.json"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with output_file.open("w", encoding="utf-8") as f:
         json.dump(image_data, f, ensure_ascii=False, indent=2)
-
-    print(f"已保存: {output_file}")
+    print(f"  已输出: {output_file}  ({len(image_data)} 个资源)")
 
 
 if __name__ == "__main__":
-    package_name = "艾罗"  # 修改资源包名称
-    images = {
-        'PACK_NAME': package_name,
-        'LOGO_PNG': 'logo.png',
-        'DEFAULT_PNG': f'resources/PetArt/{package_name}/default.png',
-        'DEFAULT2_PNG': f'resources/PetArt/{package_name}/default2.png',
-        'JUMP_PNG': f'resources/PetArt/{package_name}/jump.png',
-        'PICKUP_PNG': f'resources/PetArt/{package_name}/pickup.png',
-        'WALK_PNG': f'resources/PetArt/{package_name}/walk.png',
-        'WALK2_PNG': f'resources/PetArt/{package_name}/walk2.png',
-        'WALK3_PNG': f'resources/PetArt/{package_name}/walk3.png',
-        'WALK4_PNG': f'resources/PetArt/{package_name}/walk4.png',
-        'NONE_PNG': f'resources/PetArt/{package_name}/None.png',
-        'HIDE_GIF': f'resources/PetArt/{package_name}/hide.gif',
-        "SLEEP_PNG": f'resources/PetArt/{package_name}/sleep.png',
-        "SLEEP2_PNG": f'resources/PetArt/{package_name}/sleep2.png',
-        "DYING_PNG": f'resources/PetArt/{package_name}/dying.png',
-        "DIE_PNG": f'resources/PetArt/{package_name}/die.png'
-    }
+    base_dir = Path(__file__).resolve().parent
+    petart_root = base_dir / "resources" / "PetArt"
+    output_dir = base_dir / "resources"
 
-    convert_images_to_json(images, output_path=f"resources/{package_name}.json")
+    if not petart_root.exists():
+        print(f"PetArt 目录不存在: {petart_root}")
+        print("请在 resources/PetArt/ 下创建角色文件夹，并放入图片文件。")
+    else:
+        pack_dirs = sorted([d for d in petart_root.iterdir() if d.is_dir()])
+        if not pack_dirs:
+            print(f"PetArt 目录为空: {petart_root}")
+            print("请在 resources/PetArt/ 下创建角色文件夹，并放入图片文件。")
+        else:
+            print(f"发现 {len(pack_dirs)} 个资源包:")
+            for pack_dir in pack_dirs:
+                print(f"\n=== {pack_dir.name} ===")
+                pack_petart_folder(pack_dir, output_dir)
+            print(f"\n完成！共打包 {len(pack_dirs)} 个资源包")
+
