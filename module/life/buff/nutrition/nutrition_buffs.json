@@ -40,7 +40,7 @@
     "desc": "水分充足，喉咙感觉很舒适。",
     "hps": 0.01,
     "happys": 0.01,
-    "hydration_max": "10%"
+    "hydration_max": "3%"
   },
   {
     "id": "water_intox",
@@ -48,7 +48,7 @@
     "desc": "喝太多水了，电解质紊乱。",
     "display_in_status_bar": true,
     "icon_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAk0lEQVRYhe2WSwqAMAwFE/Gm4qnEs8aFH9pIapu2FOENCG5MpnlRJAIA+JHrqmJq4+KHHc8IEdGynYff16eEp9b4CUCgJLcoe413F4ZPAAI5eSWz15TuwvAJQAAC1V/CYOtdfeYCARMR+xVlTgu6/we0wN3IuDf7/GoHLCQjArNPE4HAhJg5iuGrTwuBl0in+qAPB70ZKyXWpzjgAAAAAElFTkSuQmCC",
-    "hps": -2,
+    "hps": -1,
     "psc_max": "-20%",
     "energy_max": "-40%",
     "hydration_max": "10%"
