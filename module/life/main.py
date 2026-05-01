@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import random
 import sys
@@ -1653,6 +1654,8 @@ class LifeSystem:
     def get_inventory_snapshot(self) -> list[dict[str, Any]]:
         snapshot: list[dict[str, Any]] = []
         for item_id, count in sorted(self.profile.inventory.items()):
+            if count <= 0:
+                continue
             item_info = self.item_registry.get(item_id)
             if not isinstance(item_info, dict):
                 # 兼容旧存档：未知物品保留在 profile.inventory，但不展示在背包列表。
@@ -3225,6 +3228,16 @@ class LifeSystem:
         self._recompute_inventory_passive_attrs()
         _log.INFO("[Life]已解锁全部图鉴")
 
+    def clear_all_collections(self) -> None:
+        """清空全部图鉴收藏进度。"""
+        for rid in list(self.profile.inventory):
+            self.profile.inventory[rid] = 0
+        self.profile.unlocked_buffs.clear()
+        self.profile.unlocked_triggers.clear()
+        self.profile.unlocked_outcomes.clear()
+        self._recompute_inventory_passive_attrs()
+        _log.INFO("[Life]已清空全部图鉴")
+
     def gain_attr_exp(self, attr_id: str, amount: float) -> list[dict[str, Any]]:
         """给指定属性增加经验值，触发升级和永久加成。返回本次升级事件列表。"""
         if attr_id not in self.profile.attr_exp:
@@ -3937,6 +3950,182 @@ class LifeSystem:
         payload = dict(trigger)
         payload["name"] = self._resolve_record_name(trigger, trigger_id)
         payload["desc"] = self._resolve_record_desc(trigger)
+
+        # 构建结果预览（HTML 格式，已解锁结果可点击跳转，几率动态计算）
+        outcome_lines: list[str] = []
+        outcome_ids: list[str] = []
+
+        guaranteed = trigger.get("guaranteed", {})
+        if isinstance(guaranteed, dict):
+            g_items = guaranteed.get("items", [])
+            g_buffs = guaranteed.get("buffs", [])
+            g_outcomes = guaranteed.get("outcomes", [])
+            g_attrs = {k: v for k, v in guaranteed.items() if k not in ("items", "buffs", "outcomes")}
+            has_guaranteed = bool(g_items or g_buffs or g_outcomes or g_attrs)
+            if has_guaranteed:
+                outcome_lines.append('<p style="margin:6px 0 1px 0;color:#888;font-size:12px;">— 必定触发 —</p>')
+                for item in g_items:
+                    if isinstance(item, dict):
+                        outcome_lines.append(f'<p style="margin:1px 0 1px 12px;font-size:13px;">{item.get("id", "")} x{item.get("count", 1)}</p>')
+                for buff_id in g_buffs:
+                    bid = str(buff_id) if not isinstance(buff_id, dict) else str(buff_id.get("id", ""))
+                    outcome_lines.append(f'<p style="margin:1px 0 1px 12px;font-size:13px;">{self._resolve_record_name(self.buff_registry.get(bid, {}), bid)}</p>')
+                for oid in g_outcomes:
+                    oid_str = str(oid) if not isinstance(oid, dict) else str(oid.get("id", ""))
+                    if oid_str in self.profile.unlocked_outcomes:
+                        outcome_detail = self.get_event_outcome_detail(oid_str)
+                        oname = outcome_detail.get("name", oid_str) if outcome_detail else oid_str
+                        outcome_ids.append(oid_str)
+                        outcome_lines.append(f'<p style="margin:1px 0 1px 12px;font-size:13px;"><a href="outcome:{oid_str}" style="color:#6aa7e0;text-decoration:none;">{oname}</a></p>')
+                    else:
+                        outcome_lines.append(f'<p style="margin:1px 0 1px 12px;font-size:13px;">???</p>')
+                for attr_key, attr_val in g_attrs.items():
+                    if isinstance(attr_val, (int, float)):
+                        outcome_lines.append(f'<p style="margin:1px 0 1px 12px;font-size:13px;">{attr_key}: {attr_val:+}</p>')
+
+        pools = trigger.get("random_pools", [])
+        if isinstance(pools, list):
+            for pi, pool in enumerate(pools):
+                entries = pool.get("entries", [])
+                if not entries:
+                    continue
+
+                # 动态计算有效几率（与 _roll_random_pool 逻辑一致）
+                valid_entries = [e for e in entries if isinstance(e, dict)]
+                base_chances = [float(e.get("chance", 0)) for e in valid_entries]
+                base_total = sum(base_chances)
+
+                effective_chances: list[float] = []
+                for entry in valid_entries:
+                    base_chance = float(entry.get("chance", 0))
+                    bonus = 0.0
+                    try:
+                        bonus += float(entry.get("flat_bonus", 0.0))
+                    except Exception:
+                        pass
+                    attr_bonus = entry.get("attr_bonus")
+                    if isinstance(attr_bonus, dict):
+                        for attr_key, bonus_per_point in attr_bonus.items():
+                            attr_val = self._effective_attr(str(attr_key))
+                            try:
+                                bonus += float(attr_val) * float(bonus_per_point)
+                            except Exception:
+                                pass
+                    state_bonus = entry.get("state_bonus")
+                    if isinstance(state_bonus, dict):
+                        for state_key, bonus_per_point in state_bonus.items():
+                            s_key = str(state_key).strip()
+                            if s_key not in self.state_keys:
+                                continue
+                            state_val = float(self.profile.states.get(s_key, 0.0))
+                            try:
+                                bonus += state_val * float(bonus_per_point)
+                            except Exception:
+                                pass
+                    effective_chances.append(max(0.0, base_chance + bonus))
+
+                if base_total > 0:
+                    base_no_fire = max(0.0, 100.0 - base_total)
+                else:
+                    base_no_fire = 0.0
+                effective_total = sum(effective_chances) + base_no_fire
+
+                if effective_total > 100.0:
+                    scale = 100.0 / effective_total
+                    normalized = [c * scale for c in effective_chances]
+                else:
+                    normalized = effective_chances
+
+                # 按几率从高到低排序
+                sorted_pairs = sorted(
+                    zip(valid_entries, normalized),
+                    key=lambda pair: pair[1],
+                    reverse=True,
+                )
+
+                # 用表格展示随机池条目
+                outcome_lines.append(f'<p style="margin:6px 0 1px 0;color:#888;font-size:12px;">— 随机池 #{pi + 1} —</p>')
+                outcome_lines.append('<table style="width:100%;border-collapse:collapse;">')
+
+                for entry, chance_val in sorted_pairs:
+                    entry_type = str(entry.get("type", "?"))
+                    eid = str(entry.get("id", ""))
+                    ec = entry.get("count", 1)
+                    name = eid
+                    if entry_type == "outcome":
+                        if eid in self.profile.unlocked_outcomes:
+                            od = self.get_event_outcome_detail(eid)
+                            if od:
+                                name = od.get("name", eid)
+                        else:
+                            name = "???"
+                    elif entry_type == "buff":
+                        name = self._resolve_record_name(self.buff_registry.get(eid, {}), eid)
+                    elif entry_type == "item":
+                        item_info = self.item_registry.get(eid, {})
+                        name = self._resolve_record_name(item_info, eid)
+
+                    chance_str = f"{chance_val:.0f}%" if chance_val > 0 else "-"
+                    suffix = f" x{ec}" if entry_type == "item" and int(ec) > 1 else ""
+
+                    if entry_type == "outcome" and name != "???":
+                        outcome_ids.append(eid)
+                        name_html = f'<a href="outcome:{eid}" style="color:#6aa7e0;text-decoration:none;">{name}</a>{suffix}'
+                    elif entry_type == "outcome":
+                        name_html = f"???{suffix}"
+                    else:
+                        name_html = f"{name}{suffix}"
+
+                    outcome_lines.append(f'<tr><td style="padding:1px 4px;font-size:13px;">{name_html}</td>'
+                                         f'<td style="padding:1px 4px;text-align:right;font-size:13px;color:#aaa;">{chance_str}</td></tr>')
+
+                # fallback 行（始终排在最后）
+                fallback = pool.get("fallback")
+                if isinstance(fallback, dict):
+                    fb_type = str(fallback.get("type", "?")).strip().lower()
+                    fb_id = str(fallback.get("id", ""))
+                    fb_name = fb_id
+                    if fb_type == "outcome":
+                        if fb_id in self.profile.unlocked_outcomes:
+                            fb_od = self.get_event_outcome_detail(fb_id)
+                            if fb_od:
+                                fb_name = fb_od.get("name", fb_id)
+                        else:
+                            fb_name = "???"
+                    elif fb_type == "buff":
+                        fb_name = self._resolve_record_name(self.buff_registry.get(fb_id, {}), fb_id)
+                    elif fb_type == "item":
+                        fb_item_info = self.item_registry.get(fb_id, {})
+                        fb_name = self._resolve_record_name(fb_item_info, fb_id)
+
+                    fb_suffix = ""
+                    if fb_type == "item":
+                        fb_ec = max(1, int(fallback.get("count", 1)))
+                        fb_suffix = f" x{fb_ec}" if fb_ec > 1 else ""
+
+                    fallback_chance = max(0.0, 100.0 - sum(effective_chances))
+                    fb_chance_str = f"{fallback_chance:.0f}%" if fallback_chance > 0 and effective_total <= 100.0 else "-"
+
+                    if fb_type == "outcome" and fb_name != "???":
+                        outcome_ids.append(fb_id)
+                        fb_name_html = f'<a href="outcome:{fb_id}" style="color:#6aa7e0;text-decoration:none;">{fb_name}</a>{fb_suffix}'
+                    elif fb_type == "outcome":
+                        fb_name_html = f"???{fb_suffix}"
+                    else:
+                        fb_name_html = f"{fb_name}{fb_suffix}"
+
+                    outcome_lines.append(f'<tr><td style="padding:1px 4px;font-size:13px;">{fb_name_html}</td>'
+                                         f'<td style="padding:1px 4px;text-align:right;font-size:13px;color:#aaa;">{fb_chance_str}</td></tr>')
+
+                outcome_lines.append("</table>")
+
+        if outcome_lines:
+            safe_desc = html.escape(payload["desc"]).replace("\n", "<br>")
+            outcome_html = "\n".join(outcome_lines)
+            payload["desc"] = f"<html><body>{safe_desc}<br><br>{outcome_html}</body></html>"
+            payload["_is_rich_desc"] = True
+            payload["_outcome_ids"] = outcome_ids
+
         return payload
 
     def get_event_outcome_detail(self, outcome_id: str) -> dict[str, Any] | None:

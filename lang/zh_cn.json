@@ -284,6 +284,8 @@
   "life.debug.card.collection.desc": "解锁所有已注册的 buff、触发器及事件结果",
   "life.debug.unlock_all_collections": "解锁全部图鉴",
   "life.debug.unlock_all_collections.done": "已解锁全部图鉴",
+  "life.debug.clear_all_collections": "清空全部图鉴",
+  "life.debug.clear_all_collections.done": "已清空全部图鉴",
   "life.debug.items.give": "给予物品",
   "life.debug.items.set": "设置数量",
   "life.debug.items.give_success": "已给予物品：{item} x{count}",

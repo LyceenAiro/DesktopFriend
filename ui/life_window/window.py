@@ -271,6 +271,7 @@ class LifeWindow(QDialog):
                 feedback_callback=self._set_feedback,
                 refresh_callback=self.refresh_view,
                 get_trigger_fail_message=self.life.get_trigger_fail_message,
+                get_outcome_detail=self.life.get_event_outcome_detail,
             ),
             LifeCollectionTab.tab_name: LifeCollectionTab(
                 get_collection_snapshot=self.life.get_collection_snapshot,

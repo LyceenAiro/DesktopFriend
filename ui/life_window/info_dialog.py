@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout
 
@@ -11,10 +13,11 @@ from util.i18n import tr
 
 
 class LifeInfoDialog(QDialog):
-    def __init__(self, entry_name: str, desc: str, debug_lines: list[str] | None = None, icon_base64: str | None = None, parent=None):
+    def __init__(self, entry_name: str, desc: str, debug_lines: list[str] | None = None, icon_base64: str | None = None, link_handler: Callable[[str], None] | None = None, parent=None):
         super().__init__(parent)
         self._dragging = False
         self._drag_start = None
+        self._link_handler = link_handler
 
         self.setWindowTitle(entry_name)
         self.setModal(False)
@@ -74,7 +77,12 @@ class LifeInfoDialog(QDialog):
 
         desc_label = QLabel(desc if desc else tr("life.common.no_desc"))
         desc_label.setWordWrap(True)
-        desc_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        if self._link_handler is not None:
+            desc_label.setTextInteractionFlags(Qt.LinksAccessibleByMouse | Qt.TextSelectableByMouse)
+            desc_label.setOpenExternalLinks(False)
+            desc_label.linkActivated.connect(self._on_link_activated)
+        else:
+            desc_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         desc_label.setStyleSheet("font-size: 13px; line-height: 1.5; color: #d6d6d6; background: transparent; border: none;")
         content_layout.addWidget(desc_label)
         content_layout.addStretch()
@@ -110,6 +118,10 @@ class LifeInfoDialog(QDialog):
 
         self.top_bar.installEventFilter(self)
         self.title_label.installEventFilter(self)
+
+    def _on_link_activated(self, href: str) -> None:
+        if self._link_handler is not None:
+            self._link_handler(href)
 
     def event(self, event):
         if event.type() == QEvent.WindowDeactivate and self.isVisible():

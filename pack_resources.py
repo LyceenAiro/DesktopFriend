@@ -31,6 +31,11 @@ def pack_petart_folder(petart_dir: Path, output_dir: Path) -> None:
             image_data[key] = base64.b64encode(f.read()).decode("utf-8")
         print(f"  已转换: {img_path.name} -> {key}")
 
+    # LOGO_PNG 复用 DEFAULT_PNG
+    if "DEFAULT_PNG" in image_data:
+        image_data["LOGO_PNG"] = image_data["DEFAULT_PNG"]
+        print(f"  LOGO_PNG <- DEFAULT_PNG")
+
     output_file = output_dir / f"{package_name}.json"
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with output_file.open("w", encoding="utf-8") as f:

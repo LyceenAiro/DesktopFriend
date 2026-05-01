@@ -129,9 +129,6 @@ class LifeInventoryTab(QFrame):
             else:
                 has_other = True
 
-        if not present_classes and not has_other:
-            self._sub_tab_bar.set_buttons([])
-            return
 
         items: list[tuple[str | None, str]] = [(None, tr("life.inventory.class.all"))]
         for cls_id in sorted(present_classes):

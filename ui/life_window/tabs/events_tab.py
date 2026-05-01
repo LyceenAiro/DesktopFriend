@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import html
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
@@ -52,6 +53,7 @@ class LifeEventsTab(QFrame):
         feedback_callback: Callable[[str, str], None],
         refresh_callback: Callable[[], None],
         get_trigger_fail_message: Callable[[str, str], str | None] | None = None,
+        get_outcome_detail: Callable[[str], dict[str, Any] | None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -67,6 +69,7 @@ class LifeEventsTab(QFrame):
         self._feedback_callback = feedback_callback
         self._refresh_callback = refresh_callback
         self._get_trigger_fail_message = get_trigger_fail_message
+        self._get_outcome_detail = get_outcome_detail
         self._rows: list[QFrame] = []
         self._trigger_result_rows: list[QFrame] = []
         self._passive_result_rows: list[QFrame] = []
@@ -629,6 +632,10 @@ class LifeEventsTab(QFrame):
             debug_lines = self._build_trigger_debug_lines(detail)
 
         desc = str(detail.get("desc", "")).strip()
+        is_rich = bool(detail.get("_is_rich_desc"))
+        outcome_ids: list[str] = detail.get("_outcome_ids", []) or []
+
+        # 持续时间
         duration_s = detail.get("duration_s")
         try:
             dur_val = float(duration_s) if duration_s is not None else 0
@@ -636,13 +643,38 @@ class LifeEventsTab(QFrame):
             dur_val = 0
         if dur_val > 0:
             dur_text = tr("life.events.info.duration", seconds=int(dur_val))
-            desc = f"{desc}\n\n{dur_text}" if desc else dur_text
+            if is_rich:
+                dur_text = html.escape(dur_text)
+                if desc.endswith("</body></html>"):
+                    desc = desc[: -len("</body></html>")] + f"<br><br>{dur_text}</body></html>"
+                else:
+                    desc = f"{desc}<br><br>{dur_text}"
+            else:
+                desc = f"{desc}\n\n{dur_text}" if desc else dur_text
+
+        # 构建链接处理器：outcome:xxx → 打开结果详情
+        link_handler = None
+        if is_rich and outcome_ids and self._get_outcome_detail is not None:
+            def _handle_link(href: str) -> None:
+                if href.startswith("outcome:"):
+                    oid = href[len("outcome:"):]
+                    od = self._get_outcome_detail(oid)
+                    if od:
+                        oname = str(od.get("name", oid))
+                        odesc = str(od.get("desc", "")).strip()
+                        LifeInfoDialog(
+                            oname, odesc,
+                            icon_base64=od.get("icon_base64"),
+                            parent=self,
+                        ).show()
+            link_handler = _handle_link
 
         dialog = LifeInfoDialog(
             str(detail.get("name", "")),
             desc,
             debug_lines=debug_lines,
             icon_base64=detail.get("icon_base64"),
+            link_handler=link_handler,
             parent=self,
         )
         dialog.show()

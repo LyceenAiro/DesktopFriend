@@ -284,6 +284,8 @@
   "life.debug.card.collection.desc": "Unlock all registered buffs, triggers, and event outcomes",
   "life.debug.unlock_all_collections": "Unlock All Collections",
   "life.debug.unlock_all_collections.done": "All collections unlocked!",
+  "life.debug.clear_all_collections": "Clear All Collections",
+  "life.debug.clear_all_collections.done": "All collections cleared!",
   "life.debug.items.give": "Grant Item",
   "life.debug.items.set": "Set Count",
   "life.debug.items.give_success": "Granted item: {item} x{count}",

@@ -169,6 +169,7 @@ class LifeCollectionTab(QFrame):
             category_name, entries,
             get_detail=detail_callbacks.get(category_key),
             developer_mode=self._developer_mode,
+            get_outcome_detail=self._get_outcome_detail,
             parent=self,
         )
         dialog.show()

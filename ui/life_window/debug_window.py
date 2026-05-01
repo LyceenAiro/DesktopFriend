@@ -277,6 +277,11 @@ class LifeDebugWindow(QDialog):
         unlock_btn = QPushButton(tr("life.debug.unlock_all_collections"))
         unlock_btn.clicked.connect(self._unlock_all_collections)
         collection_row.addWidget(unlock_btn)
+
+        clear_btn = QPushButton(tr("life.debug.clear_all_collections"))
+        clear_btn.clicked.connect(self._clear_all_collections)
+        collection_row.addWidget(clear_btn)
+
         collection_row.addStretch()
         collection_layout.addLayout(collection_row)
         layout.addWidget(collection_card)
@@ -699,6 +704,11 @@ class LifeDebugWindow(QDialog):
     def _unlock_all_collections(self):
         self.life.unlock_all_collections()
         self._set_feedback(tr("life.debug.unlock_all_collections.done"), "success")
+        self.refresh_view()
+
+    def _clear_all_collections(self):
+        self.life.clear_all_collections()
+        self._set_feedback(tr("life.debug.clear_all_collections.done"), "success")
         self.refresh_view()
 
     def _apply_selected_buff(self):

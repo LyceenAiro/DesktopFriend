@@ -24,18 +24,24 @@ class CollectionDetailDialog(QDialog):
         entries: list[dict],
         get_detail: Callable[[str], dict | None] | None = None,
         developer_mode: bool = False,
+        get_outcome_detail: Callable[[str], dict | None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self._dragging = False
         self._drag_start = None
+        self._resizing = False
+        self._resize_start_y = 0
+        self._resize_start_height = 0
         self._get_detail = get_detail
+        self._get_outcome_detail = get_outcome_detail
         self._developer_mode = developer_mode
 
         self.setWindowTitle(category_name)
         self.setModal(False)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.resize(660, 480)
+        self.setFixedWidth(660)
         self.setWindowFlags((self.windowFlags() & ~Qt.Tool) | Qt.Window | Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, False)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -131,6 +137,14 @@ class CollectionDetailDialog(QDialog):
         ok_btn.clicked.connect(self.accept)
         bottom_row.addWidget(ok_btn)
         root.addWidget(bottom)
+
+        # 底部高度调节手柄
+        self._resize_handle = QFrame(shell)
+        self._resize_handle.setFixedHeight(8)
+        self._resize_handle.setCursor(Qt.SizeVerCursor)
+        self._resize_handle.setStyleSheet("QFrame { background: transparent; }")
+        self._resize_handle.installEventFilter(self)
+        root.addWidget(self._resize_handle)
 
         apply_adobe_dialog_theme(self)
         apply_frameless_window_theme(self)
@@ -237,7 +251,31 @@ class CollectionDetailDialog(QDialog):
             return
         name = str(detail.get("name", entry_id))
         desc = str(detail.get("desc", "")).strip()
-        dialog = LifeInfoDialog(name, desc, icon_base64=detail.get("icon_base64"), parent=self)
+        is_rich = bool(detail.get("_is_rich_desc"))
+        outcome_ids: list[str] = detail.get("_outcome_ids", []) or []
+
+        link_handler = None
+        if is_rich and outcome_ids and self._get_outcome_detail is not None:
+            def _handle_link(href: str) -> None:
+                if href.startswith("outcome:"):
+                    oid = href[len("outcome:"):]
+                    od = self._get_outcome_detail(oid)
+                    if od:
+                        oname = str(od.get("name", oid))
+                        odesc = str(od.get("desc", "")).strip()
+                        LifeInfoDialog(
+                            oname, odesc,
+                            icon_base64=od.get("icon_base64"),
+                            parent=self,
+                        ).show()
+            link_handler = _handle_link
+
+        dialog = LifeInfoDialog(
+            name, desc,
+            icon_base64=detail.get("icon_base64"),
+            link_handler=link_handler,
+            parent=self,
+        )
         dialog.show()
 
     def event(self, event):
@@ -258,5 +296,23 @@ class CollectionDetailDialog(QDialog):
             if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
                 self._dragging = False
                 self._drag_start = None
+                return True
+        if watched is self._resize_handle:
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._resizing = True
+                self._resize_start_y = event.globalPosition().toPoint().y()
+                self._resize_start_height = self.height()
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseMove and self._resizing:
+                current_y = event.globalPosition().toPoint().y()
+                delta_y = current_y - self._resize_start_y
+                new_height = max(300, self._resize_start_height + delta_y)
+                self.resize(self.width(), new_height)
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self._resizing = False
+                event.accept()
                 return True
         return super().eventFilter(watched, event)
